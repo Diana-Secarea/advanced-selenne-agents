@@ -1,0 +1,51 @@
+# Follows advanced-ai-siem's .gitignore: no secrets, environments, local
+# databases, logs or runtime state ever enter this repo.
+
+# Secret / environment files — never commit these
+.env
+*.env
+.env.*
+!.env.example
+# Keys and certificates
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+secrets/
+
+# Python virtual environments (large, platform-specific)
+venv/
+**/venv/
+.venv/
+
+# Claude Code local project settings
+.claude/
+
+# Python caches / test + build output
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.coverage
+htmlcov/
+build/
+dist/
+*.egg-info/
+
+# Local databases and data (Postgres volumes, SQLite, dumps)
+*.db
+*.sqlite
+*.sqlite3
+*.dump
+pgdata/
+data/
+
+# Logs and runtime state
+logs/
+*.log
+*.json.[0-9]
+
+# OS / editor noise
+.DS_Store
+.idea/
+.vscode/

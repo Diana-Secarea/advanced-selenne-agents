@@ -1,0 +1,107 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Alerts — Selenne</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
+<!-- Selenne's stylesheet (copied by scripts/sync-selenne-ui.sh): identical
+     cards, tiles, charts and filters to the SIEM's Live Alerts page. -->
+<link rel="stylesheet" href="/agents/assets/selenne/style.css">
+<link rel="stylesheet" href="/agents/assets/console.css">
+</head>
+<body>
+
+<canvas id="particles"></canvas>
+<div class="aurora"><span></span><span></span><span></span></div>
+<div class="grid-overlay"></div>
+
+<div class="owner-line">⟡ owned by <b>Diana Secarea</b> ⟡</div>
+<nav class="nav">
+  <a class="brand" href="/agents/"><span class="logo">◈</span><em>SELENNE</em></a>
+  <a class="link" href="/agents/">Sessions</a>
+  <a class="link active" href="/agents/alerts">Alerts</a>
+  <a class="link" href="/profile.html#agent-keys">Ingestion keys</a>
+  <span class="spacer"></span>
+  <span class="status-pill"><span class="dot"></span>STREAMING</span>
+  <a class="link" id="navUser" href="/profile.html" hidden></a>
+  <a class="link" id="navOut" href="#" title="Sign out" aria-label="Sign out" hidden>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+  </a>
+</nav>
+
+<main class="page wrap">
+
+  <div class="page-head" style="padding:38px 0 10px;">
+    <span class="eyebrow reveal">⬤ AGENT ALERT DASHBOARD</span>
+    <h2 class="section-title reveal" data-delay="1">Every agent alert, <span class="grad-text">scored &amp; explained.</span></h2>
+  </div>
+
+  <div class="card ag-banner" id="entitleBanner" hidden>
+    <b>Selenne Agents isn't enabled on this account yet.</b>
+    It comes as an add-on to your Selenne plan — contact us from your
+    <a href="/profile.html">profile</a> to turn it on.
+  </div>
+
+  <!-- Exception chip bar (always visible) -->
+  <div class="exc-bar reveal">
+    <span class="exc-label">🛡 Benign</span>
+    <span id="excBenign" style="display:flex;gap:8px;flex-wrap:wrap;"></span>
+    <span class="ag-muted" style="font-size:11.5px;">mark a rule benign from any alert card — its alerts are zero-scored, never hidden</span>
+  </div>
+
+  <!-- Report cards -->
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:14px 0 18px;" class="ag-tiles reveal">
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;" id="rTotal">0</div><div class="stat-label">Total Alerts</div><div class="stat-sub" id="rAgents">—</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--red);" id="rHigh">0</div><div class="stat-label">Critical / High</div><div class="stat-sub" id="rHighPct">—</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--amber);" id="rPoss">0</div><div class="stat-label">Possible</div><div class="stat-sub" id="rPossPct">—</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--green);" id="rNorm">0</div><div class="stat-label">Normal</div><div class="stat-sub" id="rNormPct">—</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--cyan);" id="rBenign">0</div><div class="stat-label">Benign</div><div class="stat-sub" id="rBenignPct">—</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;" id="rAvg">0</div><div class="stat-label">Avg Score</div><div class="stat-sub" id="rRules">—</div></div>
+  </div>
+
+  <!-- Charts (4) -->
+  <div class="ag-charts reveal" style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;">
+    <div class="card"><h3 style="font-size:15px;">📈 Alert Timeline — last 24 h</h3><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">click a bar to filter that hour</div><div class="chart-box"><canvas id="chTime"></canvas></div></div>
+    <div class="card"><h3 style="font-size:15px;">🧠 Severity Distribution</h3><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">click to filter</div><div class="chart-box"><canvas id="chSev"></canvas></div></div>
+  </div>
+  <div class="ag-charts reveal" data-delay="1" style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-top:16px;">
+    <div class="card"><h3 style="font-size:15px;">📊 Top Rules by Frequency</h3><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">click a bar to filter by rule</div><div class="chart-box"><canvas id="chRules"></canvas></div></div>
+    <div class="card"><h3 style="font-size:15px;">🎯 OWASP LLM / ATLAS Categories</h3><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">click a bar to filter by category</div><div class="chart-box"><canvas id="chTags"></canvas></div></div>
+  </div>
+
+  <!-- Filter toolbar -->
+  <div class="card reveal" data-delay="1" style="margin-top:20px;padding:16px 18px;">
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+      <label style="flex:2;min-width:200px;"><div class="stat-label" style="margin-bottom:6px;">Search (rule · title · evidence · agent · category)</div>
+        <input class="nx-input" id="search" placeholder="🔎 search…" style="width:100%;"></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Period</div>
+        <select class="nx-select" id="fPeriod"><option value="all">all</option><option value="1h">1h</option><option value="6h">6h</option><option value="24h">24h</option><option value="7d">7d</option></select></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Severity</div>
+        <select class="nx-select" id="fSev"><option value="all">all</option><option value="CRITICAL">critical</option><option value="HIGH">high</option><option value="POSSIBLE">possible</option><option value="NORMAL">normal</option><option value="BENIGN">benign</option></select></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Min level</div>
+        <select class="nx-select" id="fLevel"><option value="0">any</option><option value="3">L3+</option><option value="5">L5+</option><option value="7">L7+</option><option value="10">L10+</option><option value="12">L12+</option></select></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Project</div>
+        <select class="nx-select" id="fProject"><option value="all">all projects</option></select></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Agent</div>
+        <select class="nx-select" id="fAgent"><option value="all">all agents</option></select></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Sort by</div>
+        <select class="nx-select" id="fSort"><option value="score">score</option><option value="time">time</option><option value="level">level</option></select></label>
+      <button class="btn btn-ghost" style="padding:10px 16px;" id="clearBtn">Clear</button>
+      <button class="btn btn-ghost" style="padding:10px 16px;" id="pauseBtn">⏸ Pause</button>
+    </div>
+  </div>
+
+  <!-- Alert stream -->
+  <div id="stream" style="display:flex;flex-direction:column;gap:10px;margin-top:16px;"></div>
+
+  <footer class="footer"><b>SELENNE</b> · AI Agents · live data from /agents/api/alerts · detection rules v0 (OWASP LLM Top 10 · MITRE ATLAS)</footer>
+</main>
+
+<script src="/agents/assets/selenne/ui.js"></script>
+<script src="/agents/assets/selenne/product-switch.js"></script>
+<script src="/agents/assets/alerts.js"></script>
+</body>
+</html>

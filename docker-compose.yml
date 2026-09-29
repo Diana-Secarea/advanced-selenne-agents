@@ -1,0 +1,81 @@
+# Selenne Agents — its own stack, next to Selenne on the same box.
+#
+#   cp .env.example .env   # fill in the secrets
+#   docker compose up -d --build
+#
+# Listeners are published on loopback only; nginx on the host terminates TLS:
+#   ingest.selenne.app  -> ingest  (4317 gRPC, 4318 HTTP)
+#   selenne.app/agents/ -> console (4319)
+# Postgres is private to this stack (it is not Selenne's wazuh_ai database).
+
+name: selenne-agents
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: selenne_agents
+      POSTGRES_USER: selenne_agents
+      POSTGRES_PASSWORD: ${SELENNE_AGENTS_DB_PASSWORD:?set SELENNE_AGENTS_DB_PASSWORD in .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U selenne_agents -d selenne_agents"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  ingest:
+    build: .
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      SELENNE_AGENTS_DATABASE_URL: postgresql://selenne_agents:${SELENNE_AGENTS_DB_PASSWORD}@postgres:5432/selenne_agents
+      INGEST_BIND: 0.0.0.0          # inside the container; publishing below is loopback-only
+      TRUST_PROXY: "1"
+    volumes:
+      - logs:/var/log/selenne-agents   # ingest.json
+    ports:
+      - "127.0.0.1:4317:4317"       # OTLP/gRPC  <- nginx grpc_pass
+      - "127.0.0.1:4318:4318"       # HTTP       <- nginx proxy_pass
+    extra_hosts:
+      # reach Selenne's backend on the host for key verification
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # selenne.app/agents/ — nginx on the host forwards /agents/ here. Signs
+  # nobody in itself: it forwards the browser's Selenne session cookie to
+  # Selenne's /api/auth/me.
+  console:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "selenne_agents.console"]
+    env_file: .env
+    environment:
+      SELENNE_AGENTS_DATABASE_URL: postgresql://selenne_agents:${SELENNE_AGENTS_DB_PASSWORD}@postgres:5432/selenne_agents
+      INGEST_BIND: 0.0.0.0
+      TRUST_PROXY: "1"
+    volumes:
+      - logs:/var/log/selenne-agents   # console.json
+    ports:
+      - "127.0.0.1:4319:4319"       # console <- nginx /agents/
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:4319/agents/health', timeout=2)"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    depends_on:
+      ingest:
+        condition: service_started   # ingest applies the schema
+
+volumes:
+  pgdata:
+  # Selenne Agents' own logs. Deliberately NOT /var/log/wazuh-ai or anything
+  # else Selenne's Wazuh collector reads: OTel ingestion must never feed SIEM
+  # alerting. Read with: docker compose exec ingest tail -f /var/log/selenne-agents/ingest.json
+  logs:

@@ -1,0 +1,86 @@
+/* AI Agents console — only what Selenne's /assets/style.css does not have. */
+
+.ag-head { padding: 44px 0 18px; }
+.ag-lede { color: var(--text-soft); font-size: 14.5px; max-width: 640px; margin: 6px 0 0; }
+.ag-muted { color: var(--text-dim); font-size: 12.5px; }
+.mono { font-family: var(--font-mono); }
+
+.ag-banner {
+  padding: 16px 20px; margin-bottom: 16px; font-size: 13.5px; color: var(--text-soft);
+  border-color: rgba(251,191,36,.4); background: rgba(251,191,36,.07);
+}
+.ag-banner b { color: var(--amber); display: block; margin-bottom: 4px; }
+
+.ag-filters { display: flex; align-items: flex-end; gap: 14px; flex-wrap: wrap; margin: 6px 0 14px; }
+.ag-filters label {
+  display: flex; flex-direction: column; gap: 6px;
+  font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim);
+}
+.ag-filters select {
+  padding: 9px 12px; border-radius: 10px; border: 1px solid rgba(255,255,255,.12);
+  background: rgba(255,255,255,.04); color: var(--text); font-size: 13px; min-width: 170px;
+  font-family: var(--font-body);
+}
+.ag-filters select option { background: #0b0d1c; }
+.ag-filters .spacer { flex: 1; }
+.ag-updated { font-size: 11px; color: var(--text-dim); }
+.ag-refresh { padding: 8px 14px; font-size: 12px; min-height: 0; }
+
+table.nx td.num, table.nx th.num { text-align: right; }
+#sessions tr[data-trace] { cursor: pointer; }
+#sessions tr.selected { background: rgba(167,139,250,.12); }
+#sessions td.name { color: var(--text); font-weight: 500; }
+
+.ag-empty { padding: 24px 26px; margin-top: 16px; }
+.ag-empty h3 { margin: 0 0 6px; }
+.ag-empty p, .ag-empty li { color: var(--text-soft); font-size: 13.5px; }
+.ag-empty li { margin: 10px 0; }
+.ag-code {
+  font-family: var(--font-mono); font-size: 12px; white-space: pre-wrap; word-break: break-all;
+  background: rgba(0,0,0,.35); border-radius: 10px; padding: 12px 14px; margin: 8px 0 0; color: var(--text);
+}
+
+.ag-detail { display: grid; grid-template-columns: 1.35fr .65fr; gap: 16px; margin-top: 16px; align-items: start; }
+@media (max-width: 1000px) { .ag-detail { grid-template-columns: 1fr; } }
+.ag-trace, .ag-inspector { padding: 20px 22px; }
+.ag-trace-head { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+.ag-trace-head h3 { margin: 8px 0 4px; }
+
+.ag-legend { display: flex; gap: 16px; flex-wrap: wrap; margin: 14px 0 10px; font-size: 11.5px; color: var(--text-dim); }
+.ag-legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 6px; vertical-align: -1px; }
+
+.ag-waterfall { display: flex; flex-direction: column; gap: 2px; }
+.wf-row {
+  display: grid; grid-template-columns: minmax(160px, 38%) 1fr 72px; gap: 10px; align-items: center;
+  padding: 5px 6px; border-radius: 8px; cursor: pointer; font-size: 12.5px;
+}
+.wf-row:hover { background: rgba(255,255,255,.04); }
+.wf-row.selected { background: rgba(167,139,250,.12); }
+.wf-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-soft); }
+.wf-name b { color: var(--text); font-weight: 500; }
+.wf-track { position: relative; height: 12px; background: rgba(255,255,255,.03); border-radius: 4px; }
+.wf-bar { position: absolute; top: 0; bottom: 0; min-width: 2px; border-radius: 4px; }
+.wf-dur { text-align: right; font-family: var(--font-mono); font-size: 11px; color: var(--text-dim); }
+
+.k-llm   { background: var(--cyan); }
+.k-tool  { background: var(--violet); }
+.k-other { background: rgba(154,166,196,.55); }
+.k-err   { background: var(--red); }
+
+.ag-inspector h4 { margin: 0 0 4px; font-size: 15px; word-break: break-word; }
+.ag-kv { width: 100%; border-collapse: collapse; margin-top: 12px; font-size: 12px; }
+.ag-kv td { padding: 6px 4px; border-bottom: 1px solid rgba(255,255,255,.05); vertical-align: top; }
+.ag-kv td:first-child { font-family: var(--font-mono); color: var(--text-dim); width: 42%; word-break: break-all; }
+.ag-kv td:last-child { color: var(--text-soft); white-space: pre-wrap; word-break: break-word; }
+.ag-sub { font-family: var(--font-mono); font-size: 10px; letter-spacing: 1.5px; color: var(--text-dim); margin-top: 16px; }
+
+/* alerts page: the SIEM uses fixed 6/2-column grids; let them wrap on phones */
+@media (max-width: 1000px) {
+  .ag-tiles { grid-template-columns: repeat(3, 1fr) !important; }
+  .ag-charts { grid-template-columns: 1fr !important; }
+}
+@media (max-width: 560px) { .ag-tiles { grid-template-columns: repeat(2, 1fr) !important; } }
+
+/* the 8-column session table scrolls inside its card on narrow screens */
+#sessionsCard { overflow-x: auto; }
+#sessionsCard table.nx { min-width: 760px; }
