@@ -1,0 +1,119 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>AI Agents — Selenne</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<!-- Selenne's stylesheet, switcher and UI runtime, copied into
+     assets/selenne/ by scripts/sync-selenne-ui.sh — same look as the SIEM,
+     no runtime dependency on Selenne serving /assets/. -->
+<link rel="stylesheet" href="/agents/assets/selenne/style.css">
+<link rel="stylesheet" href="/agents/assets/console.css">
+</head>
+<body>
+
+<canvas id="particles"></canvas>
+<div class="aurora"><span></span><span></span><span></span></div>
+<div class="grid-overlay"></div>
+
+<div class="owner-line">⟡ owned by <b>Diana Secarea</b> ⟡</div>
+<nav class="nav">
+  <a class="brand" href="/agents/"><span class="logo">◈</span><em>SELENNE</em></a>
+  <a class="link active" href="/agents/">Sessions</a>
+  <a class="link" href="/agents/alerts">Alerts</a>
+  <a class="link" href="/profile.html#agent-keys">Ingestion keys</a>
+  <span class="spacer"></span>
+  <span class="status-pill"><span class="dot"></span>AI AGENTS</span>
+  <a class="link" id="navUser" href="/profile.html" hidden></a>
+  <a class="link" id="navOut" href="#" title="Sign out" aria-label="Sign out" hidden>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+  </a>
+</nav>
+
+<main class="page wrap">
+  <div class="ag-head">
+    <span class="eyebrow reveal">🤖 AI AGENTS · SESSIONS</span>
+    <h2 class="section-title reveal" data-delay="1">What your agents <span class="grad-text">actually did.</span></h2>
+    <p class="ag-lede reveal" data-delay="2">Every run your agents and chatbots report, newest first. Click one to see its timeline of model and tool calls.</p>
+  </div>
+
+  <div class="card ag-banner" id="entitleBanner" hidden>
+    <b>Selenne Agents isn't enabled on this account yet.</b>
+    It comes as an add-on to your Selenne plan — contact us from your
+    <a href="/profile.html">profile</a> to turn it on.
+  </div>
+
+  <div class="ag-filters reveal" data-delay="2">
+    <label>PROJECT
+      <select id="fProject"><option value="">All projects</option></select>
+    </label>
+    <label>WINDOW
+      <select id="fHours">
+        <option value="1">Last hour</option>
+        <option value="24">Last 24 hours</option>
+        <option value="168" selected>Last 7 days</option>
+        <option value="720">Last 30 days</option>
+      </select>
+    </label>
+    <span class="spacer"></span>
+    <span class="mono ag-updated" id="updated"></span>
+    <button class="btn btn-ghost ag-refresh" id="refresh" type="button">↻ Refresh</button>
+  </div>
+
+  <div class="card table-card reveal" data-delay="3" id="sessionsCard">
+    <table class="nx">
+      <thead><tr>
+        <th>Started</th><th>Project</th><th>Agent</th><th>Session</th>
+        <th class="num">Duration</th><th class="num">Spans</th><th class="num">Tool calls</th><th>Status</th>
+      </tr></thead>
+      <tbody id="sessions"><tr><td colspan="8" class="ag-muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <div class="card ag-empty" id="emptyState" hidden>
+    <h3>No sessions yet</h3>
+    <p>Send your first trace and it shows up here within seconds.</p>
+    <ol>
+      <li><a href="/profile.html#agent-keys">Create an ingestion key</a> for your agent.</li>
+      <li>Point OpenTelemetry at Selenne — no code change if you already use it:
+        <pre class="ag-code">OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://ingest.selenne.app/v1/traces
+OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer sk_sel_…"
+OTEL_SERVICE_NAME=my-agent</pre>
+      </li>
+      <li>Not on OpenTelemetry? POST JSON spans to <code>https://ingest.selenne.app/v1/events</code>.</li>
+    </ol>
+  </div>
+
+  <section class="ag-detail" id="detail" hidden>
+    <div class="card ag-trace">
+      <div class="ag-trace-head">
+        <div>
+          <span class="eyebrow" id="dProject"></span>
+          <h3 id="dTitle"></h3>
+          <div class="mono ag-muted" id="dMeta"></div>
+        </div>
+        <button class="btn btn-ghost ag-refresh" id="dClose" type="button">✕ Close</button>
+      </div>
+      <div class="ag-legend">
+        <span><i class="k-llm"></i>model call</span>
+        <span><i class="k-tool"></i>tool call</span>
+        <span><i class="k-other"></i>other</span>
+        <span><i class="k-err"></i>error</span>
+      </div>
+      <div class="ag-waterfall" id="waterfall"></div>
+    </div>
+    <div class="card ag-inspector" id="inspector">
+      <div class="ag-muted">Select a span to inspect it.</div>
+    </div>
+  </section>
+
+  <footer class="footer"><b>SELENNE</b> · AI Agents · same account as your SIEM</footer>
+</main>
+
+<script src="/agents/assets/selenne/ui.js"></script>
+<script src="/agents/assets/selenne/product-switch.js"></script>
+<script src="/agents/assets/console.js"></script>
+</body>
+</html>

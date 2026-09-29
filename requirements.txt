@@ -1,0 +1,8 @@
+# Same stack as Selenne (flask, waitress, psycopg2, requests) plus the OTLP
+# wire formats. Nothing here comes from the Selenne repo.
+flask>=3.0
+waitress>=3.0
+psycopg2-binary>=2.9.0
+requests>=2.31.0
+opentelemetry-proto>=1.27,<2
+grpcio>=1.66
