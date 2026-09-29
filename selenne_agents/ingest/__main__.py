@@ -37,7 +37,7 @@ def _wait_for_schema(store, attempts=30, delay=2.0):
 def main():
     setup_logging("ingest")
     settings = Settings.from_env()
-    store = PostgresStore(settings.database_url)
+    store = PostgresStore(settings.require_database())
     _wait_for_schema(store)
     gate = Gate(build_verifier(settings), RateLimiter(settings.rate_per_sec, settings.rate_burst))
 

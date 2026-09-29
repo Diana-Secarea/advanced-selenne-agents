@@ -16,7 +16,7 @@ def main():
     setup_logging("console")
     settings = Settings.from_env()
     # The ingest service owns the schema; the console only reads.
-    store = PostgresStore(settings.database_url, maxconn=8)
+    store = PostgresStore(settings.require_database(), maxconn=8)
     sessions = SelenneSessions(settings.selenne_me_url, ttl=settings.session_cache_ttl,
                                internal_secret=settings.selenne_internal_secret)
     logging.getLogger("console").info("console on %s:%d, auth via %s",

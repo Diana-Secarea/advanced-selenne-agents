@@ -62,7 +62,7 @@ def test_host_events_dedup_only_with_event_id(pg):
 
 
 def test_unreachable_database_is_store_unavailable():
-    store = PostgresStore("postgresql://nobody:x@127.0.0.1:1/none")
+    store = PostgresStore("postgresql://127.0.0.1:1/none")      # nothing listens on port 1
     assert store.ping() is False
     with pytest.raises(StoreUnavailable):
         store.insert_spans(ME, normalize.otlp_spans(otlp_json_doc()).rows, "native")

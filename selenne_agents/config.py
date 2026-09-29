@@ -36,7 +36,8 @@ def parse_dev_keys(raw):
 
 @dataclass(frozen=True)
 class Settings:
-    database_url: str = "postgresql://selenne_agents:selenne_agents@127.0.0.1:5433/selenne_agents"
+    # No built-in default: database credentials only ever come from the environment.
+    database_url: str = ""
     # Selenne's internal key-verification endpoint and its shared secret.
     selenne_verify_url: str = ""
     selenne_internal_secret: str = ""
@@ -62,10 +63,16 @@ class Settings:
     grpc_workers: int = 8
     trust_proxy: bool = False
 
+    def require_database(self):
+        if not self.database_url:
+            raise SystemExit("SELENNE_AGENTS_DATABASE_URL is not set — docker compose "
+                             "builds it from .env; see .env.example")
+        return self.database_url
+
     @classmethod
     def from_env(cls):
         return cls(
-            database_url=os.environ.get("SELENNE_AGENTS_DATABASE_URL", cls.database_url),
+            database_url=os.environ.get("SELENNE_AGENTS_DATABASE_URL", "").strip(),
             selenne_verify_url=os.environ.get("SELENNE_VERIFY_URL", "").strip(),
             selenne_internal_secret=os.environ.get("SELENNE_INTERNAL_SECRET", "").strip(),
             selenne_me_url=os.environ.get("SELENNE_ME_URL", cls.selenne_me_url).strip(),

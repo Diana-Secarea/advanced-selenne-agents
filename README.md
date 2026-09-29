@@ -197,16 +197,23 @@ per-IP limit in front. Read the Cloudflare note at the top of that file before
 enabling gRPC.
 
 For a local demo without Selenne, set
-`SELENNE_AGENTS_DEV_KEYS=sk_sel_devkey_0123456789abcdef=diana:demo` and leave
-`SELENNE_VERIFY_URL` empty.
+`SELENNE_AGENTS_DEV_KEYS=<any sk_sel_… string, 16+ chars>=<username>:<project>`
+in `.env` and leave `SELENNE_VERIFY_URL` empty.
+
+**Secrets:** passwords, the internal secret, database URLs and keys live only
+in `.env` (git-ignored, see `.env.example`). Nothing in this repo carries a
+real or default credential — the services refuse to start without
+`SELENNE_AGENTS_DATABASE_URL` rather than fall back to one.
 
 ## Tests
 
 ```bash
 python3 -m venv .venv && .venv/bin/pip install -r requirements-dev.txt
 .venv/bin/pytest -q
-# Postgres store tests (drops and recreates tables — use a throwaway DB):
-SELENNE_AGENTS_TEST_DSN=postgresql://postgres:t@127.0.0.1:55432/sa .venv/bin/pytest -q tests/test_postgres.py
+# Postgres store tests — drop and recreate tables, so point them at a
+# THROWAWAY database, from your shell only (never write the DSN into a file here):
+export SELENNE_AGENTS_TEST_DSN=...
+.venv/bin/pytest -q tests/test_postgres.py
 ```
 
 The end-to-end tests send spans through the stock OpenTelemetry SDK exporters
