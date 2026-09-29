@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ingestion Keys — Selenne</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/selenne/style.css">
+<link rel="stylesheet" href="assets/console.css">
+</head>
+<body>
+
+<canvas id="particles"></canvas>
+<div class="aurora"><span></span><span></span><span></span></div>
+<div class="grid-overlay"></div>
+
+<div class="owner-line">⟡ owned by <b>Diana Secarea</b> ⟡</div>
+<nav class="nav">
+  <a class="brand" href="/landing.html" data-selenne-link="/landing.html" title="Selenne — home"><span class="logo">◈</span><em>SELENNE</em></a>
+  <a class="link" href="index.html">Sessions</a>
+  <a class="link" href="alerts.html">Alerts</a>
+  <a class="link" href="logs.html">Logs</a>
+  <a class="link active" href="keys.html">Ingestion keys</a>
+  <span class="spacer"></span>
+  <span class="status-pill"><span class="dot"></span>AI AGENTS</span>
+  <a class="link" id="navUser" href="/profile.html" data-selenne-link="/profile.html" hidden></a>
+  <a class="link" id="navOut" href="#" title="Sign out" aria-label="Sign out" hidden>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+  </a>
+</nav>
+
+<main class="page wrap">
+  <div class="ag-head">
+    <span class="eyebrow reveal">🔑 AI AGENTS · INGESTION KEYS</span>
+    <h2 class="section-title reveal" data-delay="1">Connect your <span class="grad-text">agents.</span></h2>
+    <p class="ag-lede reveal" data-delay="2">One key per agent or environment. Your agents send their traces to
+      <code>ingest.selenne.app</code> with it. Keys belong to your Selenne account — the same ones appear on your
+      <a href="/profile.html#agent-keys" data-selenne-link="/profile.html#agent-keys">Selenne profile</a>.</p>
+  </div>
+
+  <div class="card ag-banner" id="entitleBanner" hidden>
+    <b>Selenne Agents isn't enabled on this account yet.</b>
+    It comes as an add-on to your Selenne plan.
+  </div>
+  <div class="card ag-banner" id="keysNotice" hidden></div>
+
+  <div class="ag-keys-grid">
+    <div class="card reveal" data-delay="2" style="padding:22px 24px;">
+      <h3 style="margin:0 0 4px;">New key</h3>
+      <p class="ag-muted" style="margin:0;">Name it after what uses it — it shows up as the project in Sessions, Alerts and Logs.</p>
+      <div class="ag-keys-form">
+        <label class="ag-field">PROJECT
+          <input id="akProject" class="nx-input" placeholder="e.g. support-bot or cve-agent-prod" maxlength="64">
+        </label>
+        <button class="btn btn-primary" id="akCreate" type="button" style="padding:10px 20px;">Create key</button>
+      </div>
+      <span class="mono" id="akMsg" style="font-size:11px;display:block;margin-top:8px;"></span>
+
+      <div class="ak-reveal" id="akReveal" hidden>
+        <b style="font-size:13px;">Copy this key now — it will not be shown again.</b>
+        <pre class="ag-code" id="akKey"></pre>
+        <div style="display:flex;gap:10px;margin-top:10px;">
+          <button class="btn btn-ghost ag-refresh" id="akCopy" type="button">Copy key</button>
+          <button class="btn btn-ghost ag-refresh" id="akDone" type="button">Done</button>
+        </div>
+      </div>
+    </div>
+
+    <div class="card reveal" data-delay="3" style="padding:22px 24px;">
+      <h3 style="margin:0 0 4px;">Send traces</h3>
+      <p class="ag-muted" style="margin:0 0 10px;">Already on OpenTelemetry? No code change — set:</p>
+      <pre class="ag-code" id="snipOtel">OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://ingest.selenne.app/v1/traces
+OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer &lt;your key&gt;"
+OTEL_SERVICE_NAME=&lt;your agent&gt;</pre>
+      <p class="ag-muted" style="margin:14px 0 6px;">No OpenTelemetry? Post JSON spans:</p>
+      <pre class="ag-code" id="snipCurl">curl https://ingest.selenne.app/v1/events \
+  -H "Authorization: Bearer &lt;your key&gt;" \
+  -H "Content-Type: application/json" \
+  -d '{"resource":{"service.name":"my-agent"},
+       "spans":[{"trace_id":"&lt;32 hex&gt;","span_id":"&lt;16 hex&gt;",
+                 "name":"tool.read_file","start_time":"2026-09-29T10:00:00Z"}]}'</pre>
+    </div>
+  </div>
+
+  <div class="card table-card reveal" data-delay="3" style="margin-top:16px;" id="keysCard">
+    <table class="nx">
+      <thead><tr><th>Project</th><th>Key</th><th>Status</th><th>Created</th><th>Last used</th><th></th></tr></thead>
+      <tbody id="keys"><tr><td colspan="6" class="ag-muted">Loading…</td></tr></tbody>
+    </table>
+  </div>
+
+  <footer class="footer"><b>SELENNE</b> · AI Agents · keys live in your Selenne account — revoking one stops its agents within a minute</footer>
+</main>
+
+<script src="assets/demo.js"></script>
+<script src="assets/common.js"></script>
+<script src="assets/selenne/ui.js"></script>
+<script src="assets/selenne/product-switch.js"></script>
+<script src="assets/keys.js"></script>
+</body>
+</html>

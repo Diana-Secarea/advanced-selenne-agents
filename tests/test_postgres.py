@@ -20,7 +20,7 @@ ME = Principal("diana", "cve-agent", True, "k1")
 def pg():
     store = PostgresStore(DSN)
     with store._conn() as conn, conn.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS spans, host_events, agent_alerts, agent_benign_rules")
+        cur.execute("DROP TABLE IF EXISTS spans, host_events, agent_alerts, agent_benign_rules, ingest_batches")
     store.init_schema()
     store.init_schema()          # idempotent
     yield store
@@ -109,3 +109,20 @@ def test_alerts_roundtrip_dedup_and_benign(pg):
     assert pg.list_alerts("bob", since_ns=0) == []
     pg.set_benign_rule("diana", "AG-104", False)
     assert pg.list_benign_rules("diana") == []
+
+
+def test_ingest_history_and_feed(pg):
+    rows = normalize.otlp_spans(otlp_json_doc()).rows
+    pg.insert_spans(ME, rows, "otlp-http")
+    pg.insert_host_events(ME, normalize.host_events(
+        b'{"kind":"open","host":"w1","pid":1,"ts_unix_nano":1759140000000000000,"path":"/etc/shadow"}').rows)
+    pg.record_batch(ME, "otlp-http", 1, 1, 0)
+    pg.record_batch(ME, "native", 2, 1, 1, "span with invalid trace_id/span_id")
+    [b2, b1] = pg.list_batches("diana")
+    assert (b2["source"], b2["rejected"], b2["error"]) == ("native", 1, "span with invalid trace_id/span_id")
+    assert b1["accepted"] == 1 and b1["received_ms"] > 0
+    assert pg.list_batches("bob") == []
+    feed = pg.recent_events("diana")
+    assert sorted(e["type"] for e in feed) == ["host", "span"]
+    assert {e["type"]: e["title"] for e in feed} == {"span": "tool.read_file", "host": "open"}
+    assert pg.recent_events("bob") == []

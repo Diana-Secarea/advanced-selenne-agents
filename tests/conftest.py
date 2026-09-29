@@ -45,6 +45,9 @@ class FakeStore:
         self.alerts.extend(dict(f, principal=principal) for f in found)
         return len(found)
 
+    def record_batch(self, principal, source, accepted, new, rejected, error=None):
+        self.batches = getattr(self, "batches", []) + [(principal.username, source, accepted, new, rejected)]
+
     def ping(self):
         return not self.down
 

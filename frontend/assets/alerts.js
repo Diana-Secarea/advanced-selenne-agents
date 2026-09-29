@@ -5,8 +5,7 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const { api, esc, toast } = window.SA;                 // common.js
   const REFRESH_MS = 15000;
   const SEVS = ["CRITICAL", "HIGH", "POSSIBLE", "NORMAL", "BENIGN"];
 
@@ -15,38 +14,10 @@
                     agent: "all", sort: "score", hour: null, tag: null };
   let chTime, chSev, chRules, chTags;
 
-  function toast(msg) {
-    let t = document.querySelector(".toast");
-    if (!t) { t = document.createElement("div"); t.className = "toast"; document.body.appendChild(t); }
-    t.textContent = msg;
-    requestAnimationFrame(() => t.classList.add("show"));
-    clearTimeout(t._h);
-    t._h = setTimeout(() => t.classList.remove("show"), 2600);
-  }
   const fmtTs = (ms) => new Date(ms).toLocaleString("sv-SE");
   const tierColor = (v) => v === "CRITICAL" || v === "HIGH" ? "var(--red)" : v === "POSSIBLE" ? "var(--amber)"
     : v === "BENIGN" ? "var(--cyan)" : "var(--green)";
   const badgeCls = (v) => v === "CRITICAL" || v === "HIGH" ? "crit" : v === "POSSIBLE" ? "high" : v === "BENIGN" ? "info" : "low";
-
-  async function api(path, opts) {
-    const r = await fetch(path, Object.assign({ credentials: "same-origin" }, opts || {}));
-    const body = await r.json().catch(() => ({}));
-    if (r.status === 401) { location.href = "/login.html?next=/agents/alerts"; throw new Error("signed out"); }
-    if (r.status === 402) { $("entitleBanner").hidden = false; throw new Error("not entitled"); }
-    if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
-    return body;
-  }
-
-  /* ---------- nav ---------- */
-  api("/agents/api/me").then((d) => {
-    $("navUser").textContent = d.user.username; $("navUser").hidden = false; $("navOut").hidden = false;
-    if (!d.user.agents) $("entitleBanner").hidden = false;
-  }).catch(() => {});
-  $("navOut").addEventListener("click", async (e) => {
-    e.preventDefault();
-    try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch (_) {}
-    location.href = "/landing.html";
-  });
 
   /* ---------- load ---------- */
   async function loadRules() {
@@ -114,7 +85,7 @@
       stream.innerHTML = all.length
         ? '<div class="card" style="text-align:center;padding:34px;color:var(--text-dim);">No alerts match the current filters.</div>'
         : '<div class="card" style="text-align:center;padding:34px;color:var(--text-dim);">No agent alerts yet. Rules run on every trace your agents send — ' +
-          '<a href="/agents/">see sessions</a> or <a href="/profile.html#agent-keys">create an ingestion key</a>.</div>';
+          '<a href="index.html">see sessions</a> or <a href="keys.html">create an ingestion key</a>.</div>';
       return;
     }
     stream.innerHTML = rows.map((a) => {
@@ -145,7 +116,7 @@
           <div class="ac-actions">
             <span class="ac-subscore">rules v0</span>
             <button class="ac-btn" data-benign="${esc(a.rule_id)}">${isBenign ? "↩ Unmark" : "🛡 Benign"}</button>
-            ${a.trace_id ? `<a class="ac-btn primary" style="text-decoration:none" href="/agents/?trace=${encodeURIComponent(a.trace_id)}&span=${encodeURIComponent(a.span_id || "")}">🔎 Open session</a>` : ""}
+            ${a.trace_id ? `<a class="ac-btn primary" style="text-decoration:none" href="index.html?trace=${encodeURIComponent(a.trace_id)}&span=${encodeURIComponent(a.span_id || "")}">🔎 Open session</a>` : ""}
           </div>
         </div>
       </div>`;

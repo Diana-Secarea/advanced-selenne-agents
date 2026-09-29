@@ -104,6 +104,7 @@ def create_app(settings, gate, store):
         new = store.insert_spans(principal, batch.rows, "otlp-http")
         alerting.record(store, principal, alerting.for_spans(batch.rows))
         log_batch("otlp-http", principal, batch, new)
+        record_batch(store, "otlp-http", principal, batch, new)
         if ctype == _PROTOBUF:
             return app.response_class(otlp.response(batch).SerializeToString(),
                                       mimetype=_PROTOBUF)
@@ -118,6 +119,7 @@ def create_app(settings, gate, store):
         new = store.insert_spans(principal, batch.rows, "native")
         alerting.record(store, principal, alerting.for_spans(batch.rows))
         log_batch("native", principal, batch, new)
+        record_batch(store, "native", principal, batch, new)
         return jsonify(_summary(batch))
 
     @app.post("/v1/host-events")
@@ -129,6 +131,7 @@ def create_app(settings, gate, store):
         new = store.insert_host_events(principal, batch.rows)
         alerting.record(store, principal, alerting.for_host_events(batch.rows))
         log_batch("host-events", principal, batch, new)
+        record_batch(store, "host-events", principal, batch, new)
         return jsonify(_summary(batch))
 
     @app.get("/health")
@@ -148,6 +151,14 @@ def _summary(batch):
     if batch.error:
         out["error"] = batch.error
     return out
+
+
+def record_batch(store, source, principal, batch, new):
+    """Delivery history for the Logs page. Never fails the request."""
+    try:
+        store.record_batch(principal, source, len(batch.rows), new, batch.rejected, batch.error)
+    except Exception:            # noqa: BLE001
+        logging.getLogger("ingest.batch").exception("could not record batch history")
 
 
 def log_batch(source, principal, batch, new):

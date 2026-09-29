@@ -4,26 +4,10 @@
   "use strict";
 
   const $ = (id) => document.getElementById(id);
-  const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) =>
-    ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const { api, esc, fmtTime, fmtDuration } = window.SA;   // common.js
 
   const state = { selectedTrace: null, selectedSpan: null, spans: [], timer: null };
 
-  /* ---------- formatting ---------- */
-  function fmtDuration(ms) {
-    if (ms == null || !isFinite(ms)) return "—";
-    if (ms < 1) return (ms * 1000).toFixed(0) + " µs";
-    if (ms < 1000) return ms.toFixed(ms < 10 ? 1 : 0) + " ms";
-    if (ms < 60000) return (ms / 1000).toFixed(ms < 10000 ? 2 : 1) + " s";
-    return Math.floor(ms / 60000) + "m " + Math.round((ms % 60000) / 1000) + "s";
-  }
-  function fmtTime(ms) {
-    const d = new Date(ms);
-    const today = new Date();
-    const time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
-    return d.toDateString() === today.toDateString() ? time
-      : d.toLocaleDateString([], { month: "short", day: "numeric" }) + " " + time;
-  }
   function spanClass(s) {
     const a = s.attributes || {};
     if (s.status_code === "error") return "k-err";
@@ -31,33 +15,6 @@
     if (a["gen_ai.request.model"] || a["gen_ai.system"] || a["gen_ai.provider.name"]) return "k-llm";
     return "k-other";
   }
-
-  /* ---------- API ---------- */
-  async function api(path) {
-    const r = await fetch(path, { credentials: "same-origin" });
-    const body = await r.json().catch(() => ({}));
-    if (r.status === 401) { location.href = body.login || "/login.html?next=/agents/"; throw new Error("signed out"); }
-    if (r.status === 402) { $("entitleBanner").hidden = false; throw new Error("not entitled"); }
-    if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
-    return body;
-  }
-
-  /* ---------- nav: user chip + sign out (Selenne's session) ---------- */
-  async function loadMe() {
-    try {
-      const d = await api("/agents/api/me");
-      const u = d.user;
-      $("navUser").textContent = u.username;
-      $("navUser").hidden = false;
-      $("navOut").hidden = false;
-      if (!u.agents) $("entitleBanner").hidden = false;
-    } catch (_) { /* api() already redirected or flagged */ }
-  }
-  $("navOut").addEventListener("click", async (e) => {
-    e.preventDefault();
-    try { await fetch("/api/auth/logout", { method: "POST", credentials: "same-origin" }); } catch (_) {}
-    location.href = "/landing.html";
-  });
 
   /* ---------- filters ---------- */
   async function loadProjects() {
@@ -122,13 +79,20 @@
         children.get(s.parent_span_id).push(s);
       } else roots.push(s);   // true roots and orphans (parent not received)
     });
-    const out = [];
+    // parent_span_id is customer data: a span naming itself (or a loop of
+    // spans naming each other) as parent must not hang or crash the page.
+    // Each span is placed once; anything only reachable through a cycle is
+    // still shown, at the top level.
+    const out = [], placed = new Set();
     const walk = (s, depth) => {
+      if (placed.has(s)) return;
+      placed.add(s);
       out.push({ span: s, depth });
       (children.get(s.span_id) || []).sort((a, b) => a.start_ms - b.start_ms)
         .forEach((c) => walk(c, depth + 1));
     };
     roots.sort((a, b) => a.start_ms - b.start_ms).forEach((r) => walk(r, 0));
+    spans.filter((s) => !placed.has(s)).sort((a, b) => a.start_ms - b.start_ms).forEach((s) => walk(s, 0));
     return out;
   }
 
@@ -220,7 +184,6 @@
   $("fHours").addEventListener("change", loadSessions);
   $("refresh").addEventListener("click", refreshAll);
 
-  loadMe();
   refreshAll();
   // Deep link from an alert card: /agents/?trace=<id>&span=<id>
   const deep = new URLSearchParams(location.search);

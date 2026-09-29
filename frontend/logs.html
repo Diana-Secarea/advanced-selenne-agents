@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Logs — Selenne</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="assets/selenne/style.css">
+<link rel="stylesheet" href="assets/console.css">
+</head>
+<body>
+
+<canvas id="particles"></canvas>
+<div class="aurora"><span></span><span></span><span></span></div>
+<div class="grid-overlay"></div>
+
+<div class="owner-line">⟡ owned by <b>Diana Secarea</b> ⟡</div>
+<nav class="nav">
+  <a class="brand" href="/landing.html" data-selenne-link="/landing.html" title="Selenne — home"><span class="logo">◈</span><em>SELENNE</em></a>
+  <a class="link" href="index.html">Sessions</a>
+  <a class="link" href="alerts.html">Alerts</a>
+  <a class="link active" href="logs.html">Logs</a>
+  <a class="link" href="keys.html">Ingestion keys</a>
+  <span class="spacer"></span>
+  <span class="status-pill"><span class="dot"></span>STREAMING</span>
+  <a class="link" id="navUser" href="/profile.html" data-selenne-link="/profile.html" hidden></a>
+  <a class="link" id="navOut" href="#" title="Sign out" aria-label="Sign out" hidden>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+  </a>
+</nav>
+
+<main class="page wrap">
+  <div class="page-head" style="padding:38px 0 10px;">
+    <span class="eyebrow reveal">📜 AGENT LOGS</span>
+    <h2 class="section-title reveal" data-delay="1">Everything your agents <span class="grad-text">sent us.</span></h2>
+  </div>
+
+  <div class="card ag-banner" id="entitleBanner" hidden>
+    <b>Selenne Agents isn't enabled on this account yet.</b>
+    It comes as an add-on to your Selenne plan.
+  </div>
+
+  <div class="ag-tiles reveal" style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px;margin:6px 0 18px;">
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;" id="tBatches">0</div><div class="stat-label">Deliveries</div><div class="stat-sub" id="tSources">—</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--cyan);" id="tSpans">0</div><div class="stat-label">Spans received</div><div class="stat-sub" id="tNew">—</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--violet);" id="tHost">0</div><div class="stat-label">Sensor events</div><div class="stat-sub">from selenne-sensor</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--amber);" id="tRejected">0</div><div class="stat-label">Rejected</div><div class="stat-sub" id="tRejectedSub">malformed spans / events</div></div>
+  </div>
+
+  <div class="card reveal" data-delay="1" style="padding:16px 18px;">
+    <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;">
+      <label style="flex:2;min-width:200px;"><div class="stat-label" style="margin-bottom:6px;">Search (name · agent · host · detail)</div>
+        <input class="nx-input" id="search" placeholder="🔎 search…" style="width:100%;"></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Type</div>
+        <select class="nx-select" id="fType"><option value="all">spans + sensor</option><option value="span">spans</option><option value="host">sensor events</option></select></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Project</div>
+        <select class="nx-select" id="fProject"><option value="all">all projects</option></select></label>
+      <button class="btn btn-ghost" style="padding:10px 16px;" id="pauseBtn">⏸ Pause</button>
+    </div>
+  </div>
+
+  <div class="ag-logs-grid">
+    <section>
+      <h3 class="ag-section-title">📥 Delivery history</h3>
+      <div class="card table-card" id="batchesCard">
+        <table class="nx">
+          <thead><tr><th>Received</th><th>Via</th><th>Project</th><th class="num">Accepted</th><th class="num">New</th><th class="num">Rejected</th></tr></thead>
+          <tbody id="batches"><tr><td colspan="6" class="ag-muted">Loading…</td></tr></tbody>
+        </table>
+      </div>
+    </section>
+    <section>
+      <h3 class="ag-section-title">🛰 Live feed</h3>
+      <div id="feed" style="display:flex;flex-direction:column;gap:8px;"></div>
+    </section>
+  </div>
+
+  <footer class="footer"><b>SELENNE</b> · AI Agents · raw ingest from /agents/api/logs · kept in this stack only, never in Selenne's alerting</footer>
+</main>
+
+<script src="assets/demo.js"></script>
+<script src="assets/common.js"></script>
+<script src="assets/selenne/ui.js"></script>
+<script src="assets/selenne/product-switch.js"></script>
+<script src="assets/logs.js"></script>
+</body>
+</html>

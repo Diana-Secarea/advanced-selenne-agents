@@ -209,6 +209,41 @@ class PostgresStore:
                 cur.execute("DELETE FROM agent_benign_rules WHERE username = %s AND rule_id = %s",
                             (username, rule_id))
 
+    # --- ingest history + raw feed (Logs page) ---------------------------------
+
+    def record_batch(self, principal, source, accepted, new, rejected, error=None):
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("INSERT INTO ingest_batches (username, project, key_id, source, accepted, "
+                        "new, rejected, error) VALUES (%s, %s, %s, %s, %s, %s, %s, %s)",
+                        (principal.username, principal.project, principal.key_id, source,
+                         accepted, new, rejected, (error or None) and str(error)[:500]))
+
+    def list_batches(self, username, limit=200):
+        with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("SELECT id, project, key_id, source, accepted, new, rejected, error, "
+                        "extract(epoch FROM received_at) * 1000 AS received_ms "
+                        "FROM ingest_batches WHERE username = %s ORDER BY received_at DESC LIMIT %s",
+                        (username, limit))
+            return [dict(r) for r in cur.fetchall()]
+
+    def recent_events(self, username, limit=200):
+        """Newest spans and sensor events, interleaved — the raw feed."""
+        with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute("""
+                (SELECT 'span' AS type, project, source, name AS title, service_name AS origin,
+                        status_code AS status, trace_id, start_ns AS ts_ns,
+                        extract(epoch FROM received_at) * 1000 AS received_ms,
+                        attributes AS detail
+                 FROM spans WHERE username = %(u)s ORDER BY received_at DESC LIMIT %(n)s)
+                UNION ALL
+                (SELECT 'host' AS type, project, 'sensor' AS source, kind AS title, host AS origin,
+                        NULL AS status, NULL AS trace_id, ts_ns,
+                        extract(epoch FROM received_at) * 1000 AS received_ms,
+                        detail
+                 FROM host_events WHERE username = %(u)s ORDER BY received_at DESC LIMIT %(n)s)
+                ORDER BY received_ms DESC, ts_ns DESC LIMIT %(n)s""", {"u": username, "n": limit})
+            return [dict(r) for r in cur.fetchall()]
+
     def close(self):
         with self._pool_lock:
             if self._pool is not None:

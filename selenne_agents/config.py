@@ -45,7 +45,14 @@ class Settings:
     # cookie here to learn who is signed in (and whether Agents is enabled).
     selenne_me_url: str = "http://127.0.0.1:5000/api/auth/me"
     session_cache_ttl: float = 30.0
+    # Where the BROWSER reaches Selenne (landing, login, profile). Empty means
+    # "same origin" — the production setup behind one nginx. Set it when the
+    # console is opened on its own port, e.g. http://127.0.0.1:5000.
+    selenne_public_url: str = ""
     dev_keys: dict = field(default_factory=dict)
+    # Local development only: sign every console visitor in as this user
+    # without asking Selenne. Never set in production.
+    dev_user: str = ""
 
     key_cache_ttl: float = 60.0       # a revoked key stops working within this
     key_negative_ttl: float = 10.0    # unknown keys are re-asked this often
@@ -63,6 +70,12 @@ class Settings:
     grpc_workers: int = 8
     trust_proxy: bool = False
 
+    @property
+    def selenne_base_url(self):
+        """Selenne's backend as seen from this container (derived from
+        SELENNE_ME_URL), for server-side calls such as key management."""
+        return self.selenne_me_url.rsplit("/api/auth/me", 1)[0].rstrip("/")
+
     def require_database(self):
         if not self.database_url:
             raise SystemExit("SELENNE_AGENTS_DATABASE_URL is not set — docker compose "
@@ -77,7 +90,9 @@ class Settings:
             selenne_internal_secret=os.environ.get("SELENNE_INTERNAL_SECRET", "").strip(),
             selenne_me_url=os.environ.get("SELENNE_ME_URL", cls.selenne_me_url).strip(),
             session_cache_ttl=_float("CONSOLE_SESSION_CACHE_TTL", cls.session_cache_ttl),
+            selenne_public_url=os.environ.get("SELENNE_PUBLIC_URL", "").strip().rstrip("/"),
             dev_keys=parse_dev_keys(os.environ.get("SELENNE_AGENTS_DEV_KEYS", "")),
+            dev_user=os.environ.get("SELENNE_AGENTS_DEV_USER", "").strip(),
             key_cache_ttl=_float("INGEST_KEY_CACHE_TTL", cls.key_cache_ttl),
             key_negative_ttl=_float("INGEST_KEY_NEGATIVE_TTL", cls.key_negative_ttl),
             rate_per_sec=_float("INGEST_RATE_PER_SEC", cls.rate_per_sec),

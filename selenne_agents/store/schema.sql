@@ -84,3 +84,18 @@ CREATE TABLE IF NOT EXISTS agent_benign_rules (
     created_at  timestamptz NOT NULL DEFAULT now(),
     PRIMARY KEY (username, rule_id)
 );
+
+-- One row per accepted ingest request: the Logs page's delivery history.
+CREATE TABLE IF NOT EXISTS ingest_batches (
+    id          bigserial PRIMARY KEY,
+    username    text        NOT NULL,
+    project     text        NOT NULL,
+    key_id      text,
+    source      text        NOT NULL,       -- otlp-http | otlp-grpc | native | host-events
+    accepted    integer     NOT NULL,
+    new         integer     NOT NULL,
+    rejected    integer     NOT NULL,
+    error       text,
+    received_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS ingest_batches_tenant_time ON ingest_batches (username, received_at DESC);

@@ -1,12 +1,15 @@
 """Flask app for selenne.app/agents/ (nginx forwards /agents/ here).
 
-    GET /agents/                          the console page (signed in only)
-    GET /agents/assets/<file>             its JS/CSS (Selenne's style.css and the
-                                          product switcher come from /assets/)
+Pages (signed in only; each also answers at <name>.html so the frontend's
+relative links work however it is opened):
+    GET /agents/  /agents/alerts  /agents/keys  /agents/logs
+    GET /agents/assets/<file>             JS/CSS, incl. the copied Selenne UI
 
 The pages and their assets live in the repo's top-level frontend/ directory
 (FRONTEND_DIR overrides it), apart from the Python package.
-    GET /agents/api/me                    who is signed in, per Selenne
+
+API:
+    GET /agents/api/me                    who is signed in, per Selenne (+ selenne_url)
     GET /agents/api/projects
     GET /agents/api/sessions?project=&hours=&limit=
     GET /agents/api/sessions/<trace_id>   every span of one session
@@ -14,19 +17,27 @@ The pages and their assets live in the repo's top-level frontend/ directory
     GET /agents/api/alerts?hours=&limit=  alerts, Selenne-alert shaped
     GET /agents/api/rules                 rule catalogue + this user's benign rules
     POST/DELETE /agents/api/benign-rules[/<rule_id>]
+    GET/POST /agents/api/keys, DELETE /agents/api/keys/<id>   forwarded to Selenne
+    GET /agents/api/logs                  ingest history + raw span/sensor feed
+    POST /agents/api/logout               signs out of Selenne (both consoles)
     GET /agents/health
+
+Selenne pages (/landing.html, /login.html, /profile.html, /index.html) only
+reach this app when it is opened on its own port; they redirect to
+SELENNE_PUBLIC_URL so ◈SELENNE and the switcher still land in the right place.
 """
 
 import logging
 import os
 import re
 import time
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify, redirect, request, send_from_directory
 
 from ..alerting.rules import RULES, label_for
 from ..store import StoreUnavailable
-from .selenne_session import COOKIE, SessionUnavailable
+from .selenne_session import COOKIE, SelenneUnavailable, SessionUnavailable
 
 log = logging.getLogger("console")
 
@@ -79,8 +90,29 @@ def _alert_json(r):
             "span_id": r["span_id"].strip() if r["span_id"] else None, "host": r["host"]}
 
 
-def create_console_app(settings, sessions, store, clock=time.time):
+def _batch_json(r):
+    return {"id": r["id"], "project": r["project"], "key_id": r["key_id"], "source": r["source"],
+            "accepted": r["accepted"], "new": r["new"], "rejected": r["rejected"],
+            "error": r["error"], "received_ms": float(r["received_ms"])}
+
+
+def _event_json(r):
+    d = r["detail"] or {}
+    if r["type"] == "host":
+        summary = d.get("path") or " ".join(map(str, d.get("argv") or [])) or \
+            (f"{d.get('daddr')}:{d.get('dport', '?')}" if d.get("daddr") else "") or d.get("query") or ""
+    else:
+        summary = d.get("gen_ai.tool.name") or d.get("gen_ai.request.model") or ""
+    return {"type": r["type"], "project": r["project"], "source": r["source"], "title": r["title"],
+            "origin": r["origin"], "status": r["status"],
+            "trace_id": r["trace_id"].strip() if r["trace_id"] else None,
+            "ts_ms": _ms(r["ts_ns"]), "received_ms": float(r["received_ms"]),
+            "summary": str(summary)[:300]}
+
+
+def create_console_app(settings, sessions, store, clock=time.time, selenne=None):
     app = Flask(__name__, static_folder=None)
+    public = settings.selenne_public_url      # "" = same origin (behind nginx)
     if settings.trust_proxy:
         from werkzeug.middleware.proxy_fix import ProxyFix
         app.wsgi_app = ProxyFix(app.wsgi_app, x_for=1, x_proto=1, x_host=1)
@@ -96,7 +128,7 @@ def create_console_app(settings, sessions, store, clock=time.time):
             log.warning("session check unavailable: %s", e)
             return None, (jsonify({"error": "Sign-in service unavailable, retry shortly"}), 503)
         if not user:
-            return None, (jsonify({"error": "Sign in required", "login": LOGIN_URL}), 401)
+            return None, (jsonify({"error": "Sign in required", "login": f"{public}{LOGIN_URL}"}), 401)
         if not user["agents"]:
             return None, (jsonify({"error": "Selenne Agents is not enabled on this account",
                                    "reason": "not_entitled"}), 402)
@@ -134,13 +166,24 @@ def create_console_app(settings, sessions, store, clock=time.time):
         resp.headers["Cache-Control"] = "no-store"
         return resp
 
-    @app.get("/agents/")
-    def page():
-        return _page("index.html", LOGIN_URL)
+    for route, filename in (("/agents/", "index.html"), ("/agents/index.html", "index.html"),
+                            ("/agents/alerts", "alerts.html"), ("/agents/alerts.html", "alerts.html"),
+                            ("/agents/keys", "keys.html"), ("/agents/keys.html", "keys.html"),
+                            ("/agents/logs", "logs.html"), ("/agents/logs.html", "logs.html")):
+        def view(filename=filename, route=route):
+            return _page(filename, f"{public}/login.html?next={route}")
+        app.add_url_rule(route, f"page_{route}", view)
 
-    @app.get("/agents/alerts")
-    def alerts_page():
-        return _page("alerts.html", "/login.html?next=/agents/alerts")
+    # Only reached when the console is opened on its own port (behind nginx
+    # these paths belong to Selenne): send the browser to Selenne itself.
+    for selenne_path in ("/", "/landing.html", "/login.html", "/profile.html", "/index.html"):
+        def to_selenne(p=selenne_path):
+            if not public:
+                return ("This path belongs to Selenne. Set SELENNE_PUBLIC_URL so the Agents "
+                        "console can send you there.", 404, {"Content-Type": "text/plain; charset=utf-8"})
+            qs = request.query_string.decode()
+            return redirect(f"{public}{p}" + (f"?{qs}" if qs else ""))
+        app.add_url_rule(selenne_path, f"selenne_{selenne_path}", to_selenne)
 
     @app.get("/agents/assets/<path:name>")
     def asset(name):
@@ -157,8 +200,9 @@ def create_console_app(settings, sessions, store, clock=time.time):
         except SessionUnavailable:
             return jsonify({"error": "Sign-in service unavailable, retry shortly"}), 503
         if not user:
-            return jsonify({"user": None, "login": LOGIN_URL}), 401
-        return jsonify({"user": user})
+            return jsonify({"user": None, "login": f"{public}{LOGIN_URL}",
+                            "selenne_url": public}), 401
+        return jsonify({"user": user, "selenne_url": public})
 
     @app.get("/agents/api/projects")
     def projects():
@@ -222,9 +266,16 @@ def create_console_app(settings, sessions, store, clock=time.time):
 
     def _same_origin():
         # The Lax session cookie already keeps cross-site writes out; this is
-        # the belt to that pair of braces for the two state-changing routes.
+        # the belt to those braces for the state-changing routes. Host NAMES
+        # are compared, not ports: nginx forwards "Host: $host", which drops
+        # the port, so a full-origin match refused the console's own pages
+        # whenever it sat behind a proxy on a non-default port.
         origin = request.headers.get("Origin")
-        return not origin or origin.rstrip("/") == request.host_url.rstrip("/")
+        if not origin:
+            return True
+        if public and origin.rstrip("/") == public:
+            return True
+        return (urlparse(origin).hostname or "") == (urlparse("//" + request.host).hostname or "")
 
     @app.post("/agents/api/benign-rules")
     def benign_add():
@@ -250,5 +301,70 @@ def create_console_app(settings, sessions, store, clock=time.time):
             return jsonify({"error": "unknown rule"}), 400
         store.set_benign_rule(user["username"], rule_id, False)
         return jsonify({"benign": store.list_benign_rules(user["username"])})
+
+    # --- ingestion keys: Selenne owns them; the console only relays -------------
+
+    def _selenne(method, path, json_body=None):
+        user, err = _api_user()
+        if err:
+            return err
+        if user.get("dev") or selenne is None:
+            return jsonify({"error": "Keys are managed by Selenne, which this console is not "
+                                     "connected to (dev mode). Ingest accepts the "
+                                     "SELENNE_AGENTS_DEV_KEYS from .env meanwhile.",
+                            "dev": True}), 503
+        try:
+            status, body = selenne.call(method, path, request.cookies.get(COOKIE), json_body)
+        except SelenneUnavailable as e:
+            log.warning("selenne unavailable: %s", e)
+            return jsonify({"error": "Selenne is unreachable, retry shortly"}), 503
+        return jsonify(body), status
+
+    @app.get("/agents/api/keys")
+    def keys_list():
+        return _selenne("GET", "/api/keys")
+
+    @app.post("/agents/api/keys")
+    def keys_create():
+        if not _same_origin():
+            return jsonify({"error": "cross-origin request refused"}), 403
+        project = (request.get_json(silent=True) or {}).get("project")
+        return _selenne("POST", "/api/keys", {"project": project})
+
+    @app.delete("/agents/api/keys/<key_id>")
+    def keys_revoke(key_id):
+        if not _same_origin():
+            return jsonify({"error": "cross-origin request refused"}), 403
+        if not re.match(r"^k_[0-9a-f]{1,32}$", key_id):
+            return jsonify({"error": "bad key id"}), 400
+        return _selenne("DELETE", f"/api/keys/{key_id}")
+
+    @app.post("/agents/api/logout")
+    def logout():
+        if not _same_origin():
+            return jsonify({"error": "cross-origin request refused"}), 403
+        token = request.cookies.get(COOKIE)
+        if token and selenne is not None:
+            try:
+                selenne.call("POST", "/api/auth/logout", token)
+            except SelenneUnavailable as e:
+                log.warning("logout relay failed: %s", e)
+        resp = jsonify({"status": "ok", "next": f"{public}/landing.html"})
+        resp.delete_cookie(COOKIE)
+        return resp
+
+    # --- logs ---------------------------------------------------------------------
+
+    @app.get("/agents/api/logs")
+    def logs():
+        user, err = _api_user()
+        if err:
+            return err
+        try:
+            limit = min(max(int(request.args.get("limit", 200)), 1), 1000)
+        except ValueError:
+            return jsonify({"error": "limit must be a number"}), 400
+        return jsonify({"batches": [_batch_json(b) for b in store.list_batches(user["username"], limit)],
+                        "events": [_event_json(e) for e in store.recent_events(user["username"], limit)]})
 
     return app

@@ -83,3 +83,47 @@ class SelenneSessions:
                 "role": str(user.get("role") or "analyst"),
                 "agents": bool(user.get("agents")),
                 "email_verified": bool(user.get("email_verified"))}
+
+
+class DevSessions:
+    """SELENNE_AGENTS_DEV_USER: everyone is this user, Selenne is not asked.
+    For running the console locally without Selenne — never in production."""
+
+    def __init__(self, username):
+        log.warning("console dev mode: every visitor is signed in as %r — "
+                    "do not use in production", username)
+        self.user = {"username": username, "role": "analyst", "agents": True,
+                     "email_verified": True, "dev": True}
+
+    def user_for(self, token):
+        return self.user
+
+
+class SelenneUnavailable(Exception):
+    pass
+
+
+class SelenneClient:
+    """Calls into Selenne on behalf of the signed-in browser (its session
+    cookie is forwarded), so the Agents pages can manage ingestion keys and
+    sign out even when opened on the console's own port, without nginx.
+    Selenne still owns keys and sessions and decides every request."""
+
+    def __init__(self, base_url, internal_secret="", session=None, timeout=5.0):
+        self.base_url = base_url.rstrip("/")
+        self.headers = {"X-Selenne-Internal": internal_secret} if internal_secret else {}
+        self.session = session or requests.Session()
+        self.timeout = timeout
+
+    def call(self, method, path, token, json_body=None):
+        """(status, body) straight from Selenne."""
+        try:
+            r = self.session.request(method, self.base_url + path, cookies={COOKIE: token or ""},
+                                     json=json_body, headers=self.headers, timeout=self.timeout)
+        except requests.RequestException as e:
+            raise SelenneUnavailable(f"{method} {path} failed: {e.__class__.__name__}") from e
+        try:
+            body = r.json()
+        except ValueError:
+            body = {"error": f"Selenne answered HTTP {r.status_code}"}
+        return r.status_code, body

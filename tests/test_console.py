@@ -71,6 +71,22 @@ class FakeStore:
 
     benign = set()
 
+    def list_batches(self, username, limit=200):
+        self.calls.append(("batches", username, limit))
+        return [{"id": 1, "project": "support-bot", "key_id": "k_1", "source": "otlp-http", "accepted": 3,
+                 "new": 3, "rejected": 0, "error": None, "received_ms": NOW * 1000}] if username == "diana" else []
+
+    def recent_events(self, username, limit=200):
+        self.calls.append(("events", username, limit))
+        if username != "diana":
+            return []
+        return [{"type": "span", "project": "support-bot", "source": "otlp-http", "title": "tool.read_file",
+                 "origin": "bot", "status": "ok", "trace_id": TRACE, "ts_ns": NS, "received_ms": NOW * 1000,
+                 "detail": {"gen_ai.tool.name": "read_file"}},
+                {"type": "host", "project": "support-bot", "source": "sensor", "title": "open", "origin": "w1",
+                 "status": None, "trace_id": None, "ts_ns": NS, "received_ms": NOW * 1000,
+                 "detail": {"path": "/root/.ssh/id_rsa"}}]
+
     def list_benign_rules(self, username):
         return sorted(self.benign)
 
@@ -252,16 +268,145 @@ def test_alerts_need_entitlement(env):
     assert not [x for x in store.calls if x[0] in ("alerts", "benign")]
 
 
-@pytest.mark.parametrize("page", ["/agents/", "/agents/alerts"])
+PAGES = ["/agents/", "/agents/alerts", "/agents/keys", "/agents/logs"]
+
+
+@pytest.mark.parametrize("page", PAGES)
 def test_every_page_asset_is_served_by_the_console(env, page):
-    """The page must render with Selenne's look even when the console is
-    reached directly (no nginx, no Selenne /assets/ on the same origin) —
-    that dependency is what made the pages come out unstyled/white."""
+    """Pages reference their CSS/JS relatively, and every one is served by the
+    console itself — no dependency on Selenne's /assets/ (which is what made
+    the pages come out unstyled/white when opened on their own)."""
     import re
+    from urllib.parse import urljoin
     c, _, _ = env
     html = as_user(c, "tok-diana").get(page).data.decode()
-    refs = re.findall(r'(?:href|src)="(/[^"]+\.(?:css|js))"', html)
-    assert refs and all(r.startswith("/agents/assets/") for r in refs), refs
+    refs = [r for r in re.findall(r'(?:href|src)="([^"]+\.(?:css|js))"', html) if not r.startswith("http")]
+    assert refs and not any(r.startswith("/") for r in refs), refs
     for ref in refs:
-        assert c.get(ref).status_code == 200, ref
-    assert '<canvas id="particles">' in html          # Selenne's animated background
+        url = urljoin("http://localhost" + page, ref)[len("http://localhost"):]
+        assert c.get(url).status_code == 200, (page, ref, url)
+    assert '<canvas id="particles">' in html                 # Selenne's animated background
+    assert 'data-selenne-link="/landing.html"' in html          # ◈SELENNE → landing page
+
+
+@pytest.mark.parametrize("page", PAGES)
+def test_frontend_opens_as_plain_files(page):
+    """Opened straight from disk (file://) every relative CSS/JS path must
+    exist in frontend/, so the page is styled and falls back to preview."""
+    import os, re
+    from selenne_agents.console.app import FRONTEND_DIR
+    name = {"/agents/": "index.html"}.get(page, page.rsplit("/", 1)[1] + ".html")
+    html = open(os.path.join(FRONTEND_DIR, name), encoding="utf-8").read()
+    for ref in re.findall(r'(?:href|src)="([^"]+\.(?:css|js))"', html):
+        if not ref.startswith("http"):
+            assert os.path.isfile(os.path.join(FRONTEND_DIR, ref)), (name, ref)
+    for nav in ("index.html", "alerts.html", "logs.html", "keys.html"):
+        assert f'href="{nav}"' in html
+
+
+def test_page_aliases(env):
+    c, _, _ = env
+    as_user(c, "tok-diana")
+    for url in ("/agents/index.html", "/agents/alerts.html", "/agents/keys", "/agents/keys.html",
+                "/agents/logs", "/agents/logs.html"):
+        assert c.get(url).status_code == 200, url
+
+
+class FakeSelenne:
+    def __init__(self):
+        self.calls = []
+        self.down = False
+
+    def call(self, method, path, token, json_body=None):
+        from selenne_agents.console.selenne_session import SelenneUnavailable
+        if self.down:
+            raise SelenneUnavailable("down")
+        self.calls.append((method, path, token, json_body))
+        if path == "/api/keys" and method == "POST":
+            return 201, {"key": "sk_sel_fake", "record": {"id": "k_1", "project": json_body["project"]}}
+        return 200, {"keys": [], "status": "ok"}
+
+
+def _console(selenne=None, public="", sessions=None, store=None):
+    from dataclasses import replace
+    s = replace(Settings(), selenne_public_url=public)
+    return create_console_app(s, sessions or FakeSessions(), store or FakeStore(),
+                              clock=lambda: NOW, selenne=selenne).test_client()
+
+
+def test_keys_are_relayed_to_selenne_with_the_session():
+    sel = FakeSelenne()
+    c = as_user(_console(sel), "tok-diana")
+    assert c.get("/agents/api/keys").status_code == 200
+    r = c.post("/agents/api/keys", json={"project": "bot"})
+    assert r.status_code == 201 and r.get_json()["key"] == "sk_sel_fake"
+    assert c.delete("/agents/api/keys/k_1a2b").status_code == 200
+    assert [x[:3] for x in sel.calls] == [("GET", "/api/keys", "tok-diana"), ("POST", "/api/keys", "tok-diana"),
+                                           ("DELETE", "/api/keys/k_1a2b", "tok-diana")]
+    assert c.delete("/agents/api/keys/..%2Fauth").status_code in (400, 404)
+    assert c.post("/agents/api/keys", json={"project": "x"}, headers={"Origin": "https://evil.example"}).status_code == 403
+    sel.down = True
+    assert c.get("/agents/api/keys").status_code == 503
+
+
+def test_keys_need_sign_in_and_entitlement():
+    sel = FakeSelenne()
+    c = _console(sel)
+    assert c.get("/agents/api/keys").status_code == 401
+    assert as_user(c, "tok-carol").get("/agents/api/keys").status_code == 402
+    assert sel.calls == []
+
+
+def test_logout_relays_and_clears_cookie():
+    sel = FakeSelenne()
+    c = as_user(_console(sel, public="https://selenne.app"), "tok-diana")
+    r = c.post("/agents/api/logout")
+    assert r.get_json()["next"] == "https://selenne.app/landing.html"
+    assert ("POST", "/api/auth/logout", "tok-diana") == sel.calls[0][:3]
+    assert "session_token=;" in r.headers["Set-Cookie"]
+
+
+def test_selenne_paths_redirect_to_selenne_when_standalone():
+    c = _console(public="http://127.0.0.1:5000")
+    assert c.get("/landing.html").headers["Location"] == "http://127.0.0.1:5000/landing.html"
+    assert c.get("/login.html?next=/agents/").headers["Location"] == "http://127.0.0.1:5000/login.html?next=/agents/"
+    r = c.get("/agents/")
+    assert r.headers["Location"] == "http://127.0.0.1:5000/login.html?next=/agents/"
+    assert _console().get("/landing.html").status_code == 404      # no public URL configured
+    me = as_user(c, "tok-diana").get("/agents/api/me").get_json()
+    assert me["selenne_url"] == "http://127.0.0.1:5000"
+
+
+def test_dev_mode_signs_in_without_selenne():
+    from selenne_agents.console.selenne_session import DevSessions
+    c = _console(sessions=DevSessions("dev"))
+    assert c.get("/agents/").status_code == 200
+    assert c.get("/agents/api/me").get_json()["user"]["username"] == "dev"
+    r = c.get("/agents/api/keys")
+    assert r.status_code == 503 and r.get_json()["dev"] is True
+
+
+def test_logs_api(env):
+    c, _, store = env
+    as_user(c, "tok-diana")
+    d = c.get("/agents/api/logs?limit=5").get_json()
+    assert d["batches"][0]["source"] == "otlp-http" and d["batches"][0]["accepted"] == 3
+    ev = {e["type"]: e for e in d["events"]}
+    assert ev["span"]["summary"] == "read_file" and ev["host"]["summary"] == "/root/.ssh/id_rsa"
+    assert store.calls[-1] == ("events", "diana", 5)
+    assert c.get("/agents/api/logs?limit=x").status_code == 400
+
+
+def test_writes_accepted_behind_a_proxy_that_drops_the_port():
+    """nginx sends "Host: $host" (no port) while the browser's Origin keeps
+    it — the console's own pages must still be allowed to write."""
+    sel = FakeSelenne()
+    c = _console(sel)
+    c.set_cookie("session_token", "tok-diana", domain="127.0.0.1")
+    r = c.post("/agents/api/keys", json={"project": "bot"}, base_url="http://127.0.0.1",
+               headers={"Origin": "http://127.0.0.1:8088"})
+    assert r.status_code == 201
+    assert c.post("/agents/api/benign-rules", json={"rule_id": "AG-101"}, base_url="http://127.0.0.1",
+                  headers={"Origin": "http://127.0.0.1:8088"}).status_code == 200
+    assert c.post("/agents/api/keys", json={"project": "bot"}, base_url="http://127.0.0.1",
+                  headers={"Origin": "http://evil.example:8088"}).status_code == 403

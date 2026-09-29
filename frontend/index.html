@@ -9,8 +9,8 @@
 <!-- Selenne's stylesheet, switcher and UI runtime, copied into
      assets/selenne/ by scripts/sync-selenne-ui.sh — same look as the SIEM,
      no runtime dependency on Selenne serving /assets/. -->
-<link rel="stylesheet" href="/agents/assets/selenne/style.css">
-<link rel="stylesheet" href="/agents/assets/console.css">
+<link rel="stylesheet" href="assets/selenne/style.css">
+<link rel="stylesheet" href="assets/console.css">
 </head>
 <body>
 
@@ -20,13 +20,14 @@
 
 <div class="owner-line">⟡ owned by <b>Diana Secarea</b> ⟡</div>
 <nav class="nav">
-  <a class="brand" href="/agents/"><span class="logo">◈</span><em>SELENNE</em></a>
-  <a class="link active" href="/agents/">Sessions</a>
-  <a class="link" href="/agents/alerts">Alerts</a>
-  <a class="link" href="/profile.html#agent-keys">Ingestion keys</a>
+  <a class="brand" href="/landing.html" data-selenne-link="/landing.html" title="Selenne — home"><span class="logo">◈</span><em>SELENNE</em></a>
+  <a class="link active" href="index.html">Sessions</a>
+  <a class="link" href="alerts.html">Alerts</a>
+  <a class="link" href="logs.html">Logs</a>
+  <a class="link" href="keys.html">Ingestion keys</a>
   <span class="spacer"></span>
   <span class="status-pill"><span class="dot"></span>AI AGENTS</span>
-  <a class="link" id="navUser" href="/profile.html" hidden></a>
+  <a class="link" id="navUser" href="/profile.html" data-selenne-link="/profile.html" hidden></a>
   <a class="link" id="navOut" href="#" title="Sign out" aria-label="Sign out" hidden>
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
   </a>
@@ -42,7 +43,7 @@
   <div class="card ag-banner" id="entitleBanner" hidden>
     <b>Selenne Agents isn't enabled on this account yet.</b>
     It comes as an add-on to your Selenne plan — contact us from your
-    <a href="/profile.html">profile</a> to turn it on.
+    <a href="/profile.html" data-selenne-link="/profile.html">profile</a> to turn it on.
   </div>
 
   <div class="ag-filters reveal" data-delay="2">
@@ -76,7 +77,7 @@
     <h3>No sessions yet</h3>
     <p>Send your first trace and it shows up here within seconds.</p>
     <ol>
-      <li><a href="/profile.html#agent-keys">Create an ingestion key</a> for your agent.</li>
+      <li><a href="keys.html">Create an ingestion key</a> for your agent.</li>
       <li>Point OpenTelemetry at Selenne — no code change if you already use it:
         <pre class="ag-code">OTEL_EXPORTER_OTLP_TRACES_ENDPOINT=https://ingest.selenne.app/v1/traces
 OTEL_EXPORTER_OTLP_TRACES_HEADERS="Authorization=Bearer sk_sel_…"
@@ -112,8 +113,10 @@ OTEL_SERVICE_NAME=my-agent</pre>
   <footer class="footer"><b>SELENNE</b> · AI Agents · same account as your SIEM</footer>
 </main>
 
-<script src="/agents/assets/selenne/ui.js"></script>
-<script src="/agents/assets/selenne/product-switch.js"></script>
-<script src="/agents/assets/console.js"></script>
+<script src="assets/demo.js"></script>
+<script src="assets/common.js"></script>
+<script src="assets/selenne/ui.js"></script>
+<script src="assets/selenne/product-switch.js"></script>
+<script src="assets/console.js"></script>
 </body>
 </html>

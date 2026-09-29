@@ -8,7 +8,7 @@ import grpc
 from opentelemetry.proto.collector.trace.v1 import trace_service_pb2_grpc
 
 from . import normalize, otlp
-from .http_app import log_batch
+from .http_app import log_batch, record_batch
 from .gate import NOT_ENTITLED, RATE_LIMITED, UNAUTHENTICATED, UNAVAILABLE, Denied
 from .. import alerting
 from ..store import StoreUnavailable
@@ -47,6 +47,7 @@ class TraceService(trace_service_pb2_grpc.TraceServiceServicer):
             context.abort(grpc.StatusCode.UNAVAILABLE, "storage temporarily unavailable")
         alerting.record(self.store, principal, alerting.for_spans(batch.rows))
         log_batch("otlp-grpc", principal, batch, new)
+        record_batch(self.store, "otlp-grpc", principal, batch, new)
         return otlp.response(batch)
 
 
