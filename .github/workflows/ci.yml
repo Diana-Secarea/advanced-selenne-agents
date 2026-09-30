@@ -1,0 +1,57 @@
+# Tests for every pull request and every push to main.
+# CD (deploy to selenne-prod) will depend on this workflow passing.
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (with Postgres)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      # Throwaway database for tests/test_postgres.py — without
+      # SELENNE_AGENTS_TEST_DSN those tests skip themselves.
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: ci
+          POSTGRES_PASSWORD: ci
+          POSTGRES_DB: selenne_agents_test
+        ports: ["5432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U ci -d selenne_agents_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      SELENNE_AGENTS_TEST_DSN: postgresql://ci:ci@127.0.0.1:5432/selenne_agents_test
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"          # same as the Dockerfile
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - run: python -m pytest -q -rs
+
+  docker:
+    name: Docker image builds
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v5
+      - run: docker build -t selenne-agents:ci .
+      - name: Image imports and starts its entry points
+        run: |
+          docker run --rm selenne-agents:ci python -c "import selenne_agents.ingest, selenne_agents.console"
