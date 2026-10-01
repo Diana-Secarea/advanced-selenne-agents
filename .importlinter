@@ -1,0 +1,31 @@
+# Selenne Agents never imports Selenne (advanced-ai-siem) code — it talks to
+# it over HTTP (/internal/keys/verify, /api/auth/me) and copies what it needs
+# into selenne_agents/. Copied modules are imported as selenne_agents.<pkg>.<mod>,
+# so a bare top-level name below always means the SIEM's own module leaking in
+# (usually through a sys.path.insert).
+#
+# tests/test_no_selenne_imports.py reads this same list and also forbids any
+# top-level module starting with "wazuh", which import-linter can't express.
+
+[importlinter]
+root_package = selenne_agents
+include_external_packages = True
+
+[importlinter:contract:no-selenne-imports]
+name = selenne_agents does not import Selenne / Wazuh code
+type = forbidden
+source_modules =
+    selenne_agents
+forbidden_modules =
+    rag_core
+    ai_engine
+    scheduled_agent
+    server
+    auth
+    identity
+    tenancy
+    agent_keys
+    agentic_rag
+    agent_core
+    reactor_actions
+    episodes

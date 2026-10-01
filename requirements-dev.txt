@@ -4,3 +4,5 @@ pytest>=8
 opentelemetry-sdk>=1.27
 opentelemetry-exporter-otlp-proto-http>=1.27
 opentelemetry-exporter-otlp-proto-grpc>=1.27
+# CI import guard — see .importlinter
+import-linter>=2.1

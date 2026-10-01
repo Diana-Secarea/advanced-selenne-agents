@@ -1,0 +1,40 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      # Disposable database for tests/test_postgres.py (it drops its tables).
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: selenne_agents_test
+          POSTGRES_USER: selenne_agents
+          POSTGRES_PASSWORD: ci-only-password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U selenne_agents -d selenne_agents_test"
+          --health-interval 5s --health-timeout 3s --health-retries 20
+    env:
+      SELENNE_AGENTS_TEST_DSN: postgresql://selenne_agents:ci-only-password@localhost:5432/selenne_agents_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"        # same as the Dockerfile
+          cache: pip
+          cache-dependency-path: requirements*.txt
+      - run: pip install -r requirements-dev.txt
+      - name: No Selenne / Wazuh imports (import-linter)
+        run: lint-imports
+      - name: Tests
+        run: pytest -q -rs
