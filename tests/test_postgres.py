@@ -14,13 +14,15 @@ DSN = os.environ.get("SELENNE_AGENTS_TEST_DSN")
 pytestmark = pytest.mark.skipif(not DSN, reason="SELENNE_AGENTS_TEST_DSN not set")
 
 ME = Principal("diana", "cve-agent", True, "k1")
+ALL_TABLES = ("spans, host_events, agent_alerts, agent_benign_rules, aggregator_state, "
+              "session_traces, agent_sessions, agent_processes")
 
 
 @pytest.fixture
 def pg():
     store = PostgresStore(DSN)
     with store._conn() as conn, conn.cursor() as cur:
-        cur.execute("DROP TABLE IF EXISTS spans, host_events, agent_alerts, agent_benign_rules")
+        cur.execute(f"DROP TABLE IF EXISTS {ALL_TABLES}")
     store.init_schema()
     store.init_schema()          # idempotent
     yield store

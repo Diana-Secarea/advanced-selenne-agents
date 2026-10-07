@@ -52,6 +52,13 @@ class Settings:
     rate_per_sec: float = 20.0        # requests per second, per key
     rate_burst: int = 40
 
+    # Ingest transactions are cut off after this (Postgres transaction_timeout;
+    # the client gets a retryable 503). The aggregator re-reads rows committed
+    # up to agg_overlap seconds late, so agg_overlap must stay above it — that
+    # pair is what guarantees no span is ever skipped.
+    ingest_txn_timeout: float = 30.0
+    agg_overlap: float = 60.0
+
     max_body_bytes: int = 5 * MIB           # on the wire (compressed)
     max_decompressed_bytes: int = 20 * MIB  # after gzip — zip-bomb guard
 
@@ -62,6 +69,12 @@ class Settings:
     http_threads: int = 8
     grpc_workers: int = 8
     trust_proxy: bool = False
+
+    def __post_init__(self):
+        if self.agg_overlap <= self.ingest_txn_timeout:
+            raise ValueError(f"AGG_OVERLAP ({self.agg_overlap:g}s) must be greater than "
+                             f"INGEST_TXN_TIMEOUT ({self.ingest_txn_timeout:g}s), or late "
+                             "ingest commits can be skipped by the aggregator")
 
     def require_database(self):
         if not self.database_url:
@@ -82,6 +95,8 @@ class Settings:
             key_negative_ttl=_float("INGEST_KEY_NEGATIVE_TTL", cls.key_negative_ttl),
             rate_per_sec=_float("INGEST_RATE_PER_SEC", cls.rate_per_sec),
             rate_burst=_int("INGEST_RATE_BURST", cls.rate_burst),
+            ingest_txn_timeout=_float("INGEST_TXN_TIMEOUT", cls.ingest_txn_timeout),
+            agg_overlap=_float("AGG_OVERLAP", cls.agg_overlap),
             max_body_bytes=_int("INGEST_MAX_BODY_BYTES", cls.max_body_bytes),
             max_decompressed_bytes=_int("INGEST_MAX_DECOMPRESSED_BYTES", cls.max_decompressed_bytes),
             bind=os.environ.get("INGEST_BIND", cls.bind),

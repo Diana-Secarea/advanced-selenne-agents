@@ -4,10 +4,14 @@ import contextlib
 import logging
 import os
 import threading
+import time
+from dataclasses import dataclass
 
 import psycopg2
 import psycopg2.pool
 from psycopg2.extras import Json, RealDictCursor, execute_values
+
+from . import aggregates as agg
 
 log = logging.getLogger("store")
 
@@ -82,15 +86,54 @@ LIMIT %(limit)s
 """
 
 
+# pg_try_advisory_xact_lock key: one aggregator tick at a time, cluster-wide.
+_AGG_LOCK = 0x5E1E_A66
+# pg_try_advisory_lock key: one ensure_online_indexes() at a time.
+_INDEX_LOCK = 0x5E1E_A67
+
+# Indexes on tables that already hold data in production. Built with CREATE
+# INDEX CONCURRENTLY, so ingest keeps writing during the build; that cannot run
+# inside a transaction, so they live here and not in schema.sql.
+ONLINE_INDEXES = (
+    ("spans_received", "spans (received_at)"),
+    ("host_events_received", "host_events (received_at)"),
+    ("agent_alerts_trace", "agent_alerts (username, project, trace_id)"),
+    ("agent_alerts_created", "agent_alerts (created_at)"),
+)
+
+
+@dataclass(frozen=True)
+class TickStats:
+    spans: int          # rows picked (new page + catch-up)
+    host_events: int
+    alerts: int         # traces touched by alerts
+    sessions: int       # sessions rebuilt
+    processes: int      # process rows upserted
+    more: bool          # a page was full: tick again straight away
+    seconds: float
+
+
+@dataclass(frozen=True)
+class VerifyStats:
+    sessions: int       # sessions in the window, all rebuilt
+    repaired: int       # of those, how many were wrong — rows the ticks had missed
+    seconds: float
+
+
 class StoreUnavailable(Exception):
     """The database could not take the write — retryable for the client."""
 
 
 class PostgresStore:
-    def __init__(self, dsn, minconn=1, maxconn=16):
+    def __init__(self, dsn, minconn=1, maxconn=16, transaction_timeout=None):
+        """transaction_timeout (seconds): Postgres ends any transaction open
+        longer than this, so the session dies and the write is retried by the
+        client. Ingest sets it; see Settings.ingest_txn_timeout."""
         self.dsn = dsn
         self.minconn = minconn
         self.maxconn = maxconn
+        self.options = (f"-c transaction_timeout={int(transaction_timeout * 1000)}"
+                        if transaction_timeout else None)
         self._pool = None
         self._pool_lock = threading.Lock()
 
@@ -99,8 +142,9 @@ class PostgresStore:
         # the database is still coming up.
         with self._pool_lock:
             if self._pool is None:
+                extra = {"options": self.options} if self.options else {}
                 self._pool = psycopg2.pool.ThreadedConnectionPool(
-                    self.minconn, self.maxconn, self.dsn, connect_timeout=5)
+                    self.minconn, self.maxconn, self.dsn, connect_timeout=5, **extra)
             return self._pool
 
     @contextlib.contextmanager
@@ -125,6 +169,48 @@ class PostgresStore:
             ddl = f.read()
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute(ddl)
+
+    def ensure_online_indexes(self):
+        """Build ONLINE_INDEXES without blocking writes. Safe to call on every
+        start: valid indexes are left alone, and one left INVALID by a build
+        that was interrupted (which IF NOT EXISTS would silently keep) is
+        dropped and rebuilt. Returns the names built, or None when another
+        process is already doing this. Can take minutes on a big table."""
+        try:
+            pool = self._get_pool()
+            conn = pool.getconn()
+        except (psycopg2.OperationalError, psycopg2.pool.PoolError) as e:
+            raise StoreUnavailable(str(e).strip()) from e
+        broken, built = False, []
+        try:
+            conn.autocommit = True      # CONCURRENTLY refuses to run in a transaction
+            with conn.cursor() as cur:
+                cur.execute("SELECT pg_try_advisory_lock(%s)", (_INDEX_LOCK,))
+                if not cur.fetchone()[0]:
+                    return None
+                try:
+                    for name, target in ONLINE_INDEXES:
+                        cur.execute("SELECT indisvalid FROM pg_index "
+                                    "WHERE indexrelid = to_regclass(%s)", (name,))
+                        row = cur.fetchone()
+                        if row and row[0]:
+                            continue
+                        if row:
+                            log.warning("index %s is invalid (interrupted build), rebuilding", name)
+                            cur.execute(f"DROP INDEX CONCURRENTLY IF EXISTS {name}")
+                        log.info("building index %s on %s", name, target)
+                        cur.execute(f"CREATE INDEX CONCURRENTLY IF NOT EXISTS {name} ON {target}")
+                        built.append(name)
+                finally:
+                    cur.execute("SELECT pg_advisory_unlock(%s)", (_INDEX_LOCK,))
+            return built
+        except (psycopg2.OperationalError, psycopg2.InterfaceError) as e:
+            broken = True
+            raise StoreUnavailable(str(e).strip()) from e
+        finally:
+            if not broken and not conn.closed:
+                conn.autocommit = False
+            pool.putconn(conn, close=broken or conn.closed != 0)
 
     def ping(self):
         try:
@@ -208,6 +294,95 @@ class PostgresStore:
             else:
                 cur.execute("DELETE FROM agent_benign_rules WHERE username = %s AND rule_id = %s",
                             (username, rule_id))
+
+    # --- aggregation (see aggregates.py) --------------------------------------
+
+    def aggregate_tick(self, batch=20000, overlap_s=60.0):
+        """One aggregator step in one transaction. Returns TickStats, or None
+        when another aggregator holds the lock (that tick is simply skipped)."""
+        t0 = time.monotonic()
+        with self._conn() as conn, conn.cursor() as cur:
+            if not self._agg_lock(cur):
+                return None
+            cur.execute("SELECT name, last_id, scanned_at FROM aggregator_state")
+            marks = {name: (last_id, scanned_at) for name, last_id, scanned_at in cur.fetchall()}
+            picked, more, moved = {}, False, {}
+            for table, pick_sql in agg.PICK_TICK_SQL.items():
+                last_id, scanned_at = marks.get(table, (0, None))
+                cur.execute(agg.PAGE_SQL.format(table=table),
+                            {"last_id": last_id, "batch": batch})
+                upto, n = cur.fetchone()
+                more = more or n >= batch
+                cur.execute(pick_sql, {"last_id": last_id, "upto": upto,
+                                       "scanned_at": scanned_at, "overlap": overlap_s})
+                picked[table], moved[table] = cur.rowcount, upto
+            sessions, processes = self._rebuild(cur)
+            for table, upto in moved.items():
+                cur.execute(agg.MARK_SQL, {"name": table, "last_id": upto})
+        return TickStats(picked["spans"], picked["host_events"], picked["agent_alerts"],
+                         sessions, processes, more, time.monotonic() - t0)
+
+    def verify_recent(self, window_s=7200.0):
+        """The periodic check: rebuild every session with a span or alert
+        received in the last window_s, by time rather than by id, so rows the
+        watermark skipped are caught too. Watermarks are left alone. Returns
+        VerifyStats — `repaired` counts sessions whose stored row was wrong
+        and should stay 0 — or None while a tick holds the lock."""
+        t0 = time.monotonic()
+        with self._conn() as conn, conn.cursor() as cur:
+            if not self._agg_lock(cur):
+                return None
+            for pick_sql in agg.PICK_WINDOW_SQL.values():
+                cur.execute(pick_sql, {"window": window_s})
+            sessions, _ = self._rebuild(cur, snapshot=True)
+            cur.execute(agg.REPAIRED_SQL)
+            repaired = cur.fetchone()[0]
+        if repaired:
+            log.warning("aggregate check repaired %d of %d sessions", repaired, sessions)
+        return VerifyStats(sessions, repaired, time.monotonic() - t0)
+
+    @staticmethod
+    def _agg_lock(cur):
+        cur.execute("SELECT pg_try_advisory_xact_lock(%s)", (_AGG_LOCK,))
+        return cur.fetchone()[0]
+
+    @staticmethod
+    def _rebuild(cur, snapshot=False):
+        """Steps 2–4 over the agg_spans / agg_events / agg_alerts temp tables.
+        Returns (sessions rebuilt, process rows upserted)."""
+        cur.execute(agg.RESOLVE_SQL)
+        cur.execute(agg.MAP_TRACES_SQL)
+        cur.execute(agg.AFFECTED_SQL)
+        if snapshot:
+            cur.execute(agg.SNAPSHOT_SQL)
+        cur.execute(agg.DELETE_SESSIONS_SQL)
+        cur.execute(agg.REBUILD_SESSIONS_SQL)
+        sessions = cur.rowcount
+        cur.execute(agg.SPAN_PROCESSES_SQL)
+        processes = cur.rowcount
+        cur.execute(agg.EVENT_PROCESSES_SQL)
+        return sessions, processes + cur.rowcount
+
+    def aggregator_lag(self):
+        """Seconds since the last completed tick, None if none has run yet."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT extract(epoch FROM now() - min(scanned_at)) FROM aggregator_state")
+            lag = cur.fetchone()[0]
+            return None if lag is None else float(lag)
+
+    def list_agent_sessions(self, username, since_ns, project=None, limit=100):
+        """Aggregated sessions with activity since since_ns, newest first."""
+        with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(agg.SESSIONS_READ_SQL, {"username": username, "since_ns": since_ns,
+                                                "project": project, "limit": limit})
+            return [dict(r) for r in cur.fetchall()]
+
+    def get_session_spans(self, username, session_id, limit=5000):
+        """Every span of every trace in one aggregated session."""
+        with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(agg.SESSION_SPANS_SQL, {"username": username, "session_id": session_id,
+                                                "limit": limit})
+            return [dict(r) for r in cur.fetchall()]
 
     def close(self):
         with self._pool_lock:
