@@ -45,6 +45,10 @@ class Settings:
     # cookie here to learn who is signed in (and whether Agents is enabled).
     selenne_me_url: str = "http://127.0.0.1:5000/api/auth/me"
     session_cache_ttl: float = 30.0
+    # Where the console's Sessions page reads from: "aggregate" (the
+    # aggregator's agent_sessions) or "raw" (group raw spans per request, as
+    # before the aggregator) — the one-variable way back.
+    sessions_source: str = "aggregate"
     dev_keys: dict = field(default_factory=dict)
 
     key_cache_ttl: float = 60.0       # a revoked key stops working within this
@@ -79,6 +83,9 @@ class Settings:
     trust_proxy: bool = False
 
     def __post_init__(self):
+        if self.sessions_source not in ("aggregate", "raw"):
+            raise ValueError(f"CONSOLE_SESSIONS_SOURCE must be aggregate or raw, "
+                             f"not {self.sessions_source!r}")
         if self.agg_overlap <= self.ingest_txn_timeout:
             raise ValueError(f"AGG_OVERLAP ({self.agg_overlap:g}s) must be greater than "
                              f"INGEST_TXN_TIMEOUT ({self.ingest_txn_timeout:g}s), or late "
@@ -98,6 +105,8 @@ class Settings:
             selenne_internal_secret=os.environ.get("SELENNE_INTERNAL_SECRET", "").strip(),
             selenne_me_url=os.environ.get("SELENNE_ME_URL", cls.selenne_me_url).strip(),
             session_cache_ttl=_float("CONSOLE_SESSION_CACHE_TTL", cls.session_cache_ttl),
+            sessions_source=os.environ.get("CONSOLE_SESSIONS_SOURCE",
+                                           cls.sessions_source).strip().lower(),
             dev_keys=parse_dev_keys(os.environ.get("SELENNE_AGENTS_DEV_KEYS", "")),
             key_cache_ttl=_float("INGEST_KEY_CACHE_TTL", cls.key_cache_ttl),
             key_negative_ttl=_float("INGEST_KEY_NEGATIVE_TTL", cls.key_negative_ttl),

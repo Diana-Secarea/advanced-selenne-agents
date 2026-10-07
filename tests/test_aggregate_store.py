@@ -97,6 +97,8 @@ def test_conversation_groups_traces(pg):
     assert (s["kind"], s["conversation_id"], s["traces"], s["spans"]) == ("conversation", "chat-7", 2, 3)
     names = [(r["trace_id"], r["name"]) for r in pg.get_session_spans("diana", sid)]
     assert names == [(T1, "step1"), (T1, "step2"), (T2, "step1")]
+    # any of its traces opens the same session
+    assert pg.get_session_spans("diana", T2) == pg.get_session_spans("diana", sid)
 
 
 def test_late_conversation_span_moves_the_trace(pg):
@@ -107,7 +109,11 @@ def test_late_conversation_span_moves_the_trace(pg):
     pg.aggregate_tick()
     got = _sessions(pg)
     assert list(got) == [_conv_id("c9")] and got[_conv_id("c9")]["spans"] == 2
-    assert pg.get_session_spans("diana", T1) == []
+    # T1's own session is gone; its id now opens the conversation it joined
+    rows = pg.get_session_spans("diana", T1)
+    assert {r["session_id"] for r in rows} == {_conv_id("c9")} and len(rows) == 2
+    assert pg.list_agent_projects("diana") == ["cve-agent"]
+    assert pg.list_agent_projects("bob") == []
 
 
 def test_tick_is_idempotent(pg):

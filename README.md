@@ -21,10 +21,10 @@ browser ── selenne.app/agents/ ──► console ─┴── session check 
 |---|---|
 | Ingestion (`selenne_agents/ingest`, `selenne_agents/store`) | **built** |
 | Keys + `/internal/keys/verify` in Selenne, keys card on the profile page | **built** (Selenne repo) |
-| Console skeleton at `selenne.app/agents/` (`selenne_agents/console`) | **built** — sessions = traces for now |
+| Console at `selenne.app/agents/` (`selenne_agents/console`) | **built** — reads the aggregated sessions |
 | Landing option, "Launch console ▾" and the SIEM ⇄ AI Agents switcher | **built** (Selenne repo) |
 | Alerts: detection rules v0 at ingest + `/agents/alerts` page (the SIEM Live Alerts layout) | **built** |
-| Session aggregation: the `aggregator` service fills `agent_sessions` / `agent_processes` (`selenne_agents/aggregate`) | **built**, the console doesn't read it yet |
+| Session aggregation: the `aggregator` service fills `agent_sessions` / `agent_processes` (`selenne_agents/aggregate`) | **built** |
 | Scoring, reconciliation, agent RAG, reactor | not yet |
 | Sensor (sidecar) | not yet — the `/v1/host-events` endpoint already accepts its format |
 | Stripe add-on | not yet — `AGENTS_OPEN_BETA=1` in Selenne entitles everyone meanwhile |
@@ -102,6 +102,12 @@ transaction. A full batch means a backlog, and the next round starts at once.
   `aggregator_state.last_id` to 0 and the rounds work through the raw tables.
 - **Indexes.** The indexes it needs on the big raw tables are built
   `CONCURRENTLY` at startup, in the background, so ingest keeps writing.
+
+The console's Sessions page reads `agent_sessions`, so it can be up to one
+round behind live. `CONSOLE_SESSIONS_SOURCE=raw` switches it back to grouping
+raw spans per request (one trace = one session, no tokens or scores), the way
+back if the aggregate ever looks wrong. `/agents/health` shows
+`aggregator_lag_s`.
 
 `python -m selenne_agents.aggregate check` exits 1 when the last round is older
 than `AGG_MAX_LAG` (120 s); it is the container healthcheck.
@@ -275,7 +281,7 @@ selenne_agents/
     aggregates.py     the aggregator's SQL (one round, the check)
     schema.sql        tables, applied by ingest at startup
   console/
-    app.py            /agents/ page + /agents/api/* (sessions, one session)
+    app.py            /agents/ page + /agents/api/* (sessions, one session, alerts)
     selenne_session.py  cookie -> Selenne /api/auth/me, cached
   logging_setup.py    stderr + own JSON files (never Selenne's collector files)
 frontend/             the console UI, served at /agents/ (FRONTEND_DIR)

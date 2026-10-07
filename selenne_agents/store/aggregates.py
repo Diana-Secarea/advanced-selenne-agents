@@ -262,13 +262,21 @@ ORDER BY a.last_ns DESC
 LIMIT %(limit)s
 """
 
+# The id may be a session id or the id of any trace in a session (an alert's
+# deep link carries a trace id): either way, the whole session comes back.
 SESSION_SPANS_SQL = """
-SELECT s.trace_id, s.span_id, s.parent_span_id, s.name, s.kind, s.start_ns, s.end_ns,
+WITH sess AS (
+    SELECT DISTINCT project, session_id FROM session_traces
+    WHERE username = %(username)s
+      AND (session_id = %(session_id)s OR trace_id = %(session_id)s)
+)
+SELECT st.session_id, s.trace_id, s.span_id, s.parent_span_id, s.name, s.kind, s.start_ns, s.end_ns,
        s.status_code, s.status_message, s.service_name, s.scope_name, s.project, s.source,
        s.attributes, s.events, s.resource
-FROM session_traces st
+FROM sess
+JOIN session_traces st ON st.username = %(username)s AND st.project = sess.project
+                      AND st.session_id = sess.session_id
 JOIN spans s ON s.username = st.username AND s.project = st.project AND s.trace_id = st.trace_id
-WHERE st.username = %(username)s AND st.session_id = %(session_id)s
 ORDER BY s.start_ns
 LIMIT %(limit)s
 """

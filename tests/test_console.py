@@ -7,6 +7,8 @@ from selenne_agents.console.selenne_session import SelenneSessions, SessionUnava
 from selenne_agents.store import StoreUnavailable
 
 TRACE = "5b8efff798038103d269b633813fc60c"
+TRACE2 = "6c9f0008a9149214e37ac744924ad71d"
+CONV = "0123456789abcdef0123456789abcdef"     # a conversation session: TRACE + TRACE2
 NOW = 1790676000.0                       # 2026-09-29T10:00:00Z
 NS = int(NOW * 1e9)
 
@@ -36,6 +38,44 @@ class FakeStore:
         self._check()
         return {"diana": ["support-bot"]}.get(username, [])
 
+    lag = 2.5
+
+    def aggregator_lag(self):
+        self._check()
+        return self.lag
+
+    def list_agent_projects(self, username):
+        self._check()
+        return {"diana": ["support-bot"]}.get(username, [])
+
+    def list_agent_sessions(self, username, since_ns, project=None, limit=100):
+        self._check()
+        self.calls.append(("agent_sessions", username, since_ns, project, limit))
+        if username != "diana":
+            return []
+        return [{"session_id": CONV, "kind": "conversation", "conversation_id": "chat-7",
+                 "project": "support-bot", "service_name": "bot", "root_name": "agent.run",
+                 "first_ns": NS + 123_456_789, "last_ns": NS + 1_623_456_789, "traces": 2,
+                 "spans": 3, "errors": 1, "tool_calls": 1, "llm_calls": 2, "input_tokens": 120,
+                 "output_tokens": 30, "alert_scores": {"AG-101": 85}, "max_alert_score": 85,
+                 "hosts": ["w1"]}]
+
+    def get_session_spans(self, username, session_id, limit=5000):
+        self._check()
+        self.calls.append(("session", username, session_id))
+        if username != "diana" or session_id not in (CONV, TRACE, TRACE2):
+            return []
+        return [dict(s, session_id=CONV) for s in self._spans(TRACE) + self._spans(TRACE2)]
+
+    @staticmethod
+    def _spans(trace_id):
+        return [{"trace_id": trace_id, "span_id": "eee19b7ec3c1b174", "parent_span_id": None,
+                 "name": "agent.run", "kind": "internal", "start_ns": NS,
+                 "end_ns": NS + 1_500_000_000, "status_code": "ok", "status_message": None,
+                 "service_name": "bot", "scope_name": "s", "project": "support-bot",
+                 "source": "otlp-http", "attributes": {"a": 1}, "resource": {"service.name": "bot"},
+                 "events": [{"name": "e", "time_ns": NS + 1_000_000, "attributes": {}}]}]
+
     def list_sessions(self, username, since_ns, project=None, limit=100):
         self._check()
         self.calls.append(("sessions", username, since_ns, project, limit))
@@ -50,12 +90,7 @@ class FakeStore:
         self.calls.append(("trace", username, trace_id))
         if username != "diana" or trace_id != TRACE:
             return []
-        return [{"span_id": "eee19b7ec3c1b174", "parent_span_id": None, "name": "agent.run",
-                 "kind": "internal", "start_ns": NS, "end_ns": NS + 1_500_000_000,
-                 "status_code": "ok", "status_message": None, "service_name": "bot",
-                 "scope_name": "s", "project": "support-bot", "source": "otlp-http",
-                 "attributes": {"a": 1}, "resource": {"service.name": "bot"},
-                 "events": [{"name": "e", "time_ns": NS + 1_000_000, "attributes": {}}]}]
+        return self._spans(TRACE)
 
 
     def list_alerts(self, username, since_ns, limit=500):
@@ -79,12 +114,21 @@ class FakeStore:
         (self.benign.add if on else self.benign.discard)(rule_id)
 
 
-@pytest.fixture
-def env():
+def _env(**settings):
     sessions, store = FakeSessions(), FakeStore()
     store.benign = set()
-    app = create_console_app(Settings(), sessions, store, clock=lambda: NOW)
+    app = create_console_app(Settings(**settings), sessions, store, clock=lambda: NOW)
     return app.test_client(), sessions, store
+
+
+@pytest.fixture
+def env():
+    return _env()
+
+
+@pytest.fixture
+def raw_env():
+    return _env(sessions_source="raw")
 
 
 def as_user(client, token):
@@ -140,15 +184,71 @@ def test_sessions_param_validation(env):
     # clamped rather than refused
 
 
+def test_sessions_come_from_the_aggregator(env):
+    c, _, store = env
+    [s] = as_user(c, "tok-diana").get("/agents/api/sessions").get_json()["sessions"]
+    assert (s["session_id"], s["kind"], s["conversation_id"], s["traces"]) == (CONV, "conversation", "chat-7", 2)
+    assert (s["llm_calls"], s["input_tokens"], s["output_tokens"]) == (2, 120, 30)
+    assert (s["max_alert_score"], s["max_alert_label"], s["hosts"]) == (85, "HIGH", ["w1"])
+    assert [k for k, *_ in store.calls] == ["agent_sessions"]
+    assert c.get("/agents/api/projects").get_json()["projects"] == ["support-bot"]
+
+
 def test_session_detail(env):
     c, _, store = env
     as_user(c, "tok-diana")
-    r = c.get(f"/agents/api/sessions/{TRACE.upper()}")
+    r = c.get(f"/agents/api/sessions/{CONV.upper()}")
     assert r.status_code == 200
-    [span] = r.get_json()["spans"]
+    d = r.get_json()
+    assert d["session_id"] == CONV and d["traces"] == sorted([TRACE, TRACE2])
+    span = d["spans"][0]
+    assert span["trace_id"] == TRACE
     assert span["start_ms"] == pytest.approx(NS / 1e6) and span["events"][0]["time_ms"] == pytest.approx((NS + 1_000_000) / 1e6)
     assert c.get("/agents/api/sessions/not-a-trace").status_code == 400
     assert c.get("/agents/api/sessions/" + "a" * 32).status_code == 404
+
+
+def test_trace_id_opens_its_whole_session(env):
+    # an alert's deep link carries a trace id
+    c, _, _ = env
+    d = as_user(c, "tok-diana").get(f"/agents/api/sessions/{TRACE2}").get_json()
+    assert d["session_id"] == CONV and len(d["spans"]) == 2
+
+
+def test_detail_falls_back_to_the_raw_trace(env, monkeypatch):
+    # a trace the aggregator hasn't reached yet still opens
+    c, _, store = env
+    monkeypatch.setattr(store, "get_session_spans", lambda *a, **k: [])
+    d = as_user(c, "tok-diana").get(f"/agents/api/sessions/{TRACE}").get_json()
+    assert d["session_id"] == TRACE and d["traces"] == [TRACE] and len(d["spans"]) == 1
+
+
+def test_raw_source_is_the_old_query_in_the_new_shape(raw_env, env):
+    c, _, store = raw_env
+    as_user(c, "tok-diana")
+    r = c.get("/agents/api/sessions").get_json()
+    [s] = r["sessions"]
+    assert r["source"] == "raw" and [k for k, *_ in store.calls] == ["sessions"]
+    assert (s["session_id"], s["kind"], s["traces"], s["llm_calls"]) == (TRACE, "trace", 1, None)
+    agg = as_user(env[0], "tok-diana").get("/agents/api/sessions").get_json()["sessions"][0]
+    assert s.keys() == agg.keys()                # the page renders either
+    d = c.get(f"/agents/api/sessions/{TRACE}").get_json()
+    assert d["session_id"] == TRACE and len(d["spans"]) == 1
+    assert "session" not in [k for k, *_ in store.calls]       # never touches the aggregate
+
+
+def test_bad_sessions_source_refused():
+    with pytest.raises(ValueError, match="CONSOLE_SESSIONS_SOURCE"):
+        Settings(sessions_source="spans")
+
+
+def test_health_reports_aggregator_lag_but_never_fails(env):
+    c, _, store = env
+    assert c.get("/agents/health").get_json() == {
+        "status": "ok", "sessions_source": "aggregate", "aggregator_lag_s": 2.5}
+    store.down = True
+    r = c.get("/agents/health")
+    assert r.status_code == 200 and r.get_json()["aggregator_lag_s"] is None
 
 
 def test_other_users_trace_is_404(env):

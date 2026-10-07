@@ -60,7 +60,7 @@ LIMIT %(limit)s
 """
 
 _TRACE_SQL = """
-SELECT span_id, parent_span_id, name, kind, start_ns, end_ns, status_code, status_message,
+SELECT trace_id, span_id, parent_span_id, name, kind, start_ns, end_ns, status_code, status_message,
        service_name, scope_name, project, source, attributes, events, resource
 FROM spans
 WHERE username = %(username)s AND trace_id = %(trace_id)s
@@ -384,8 +384,15 @@ class PostgresStore:
                                                 "project": project, "limit": limit})
             return [dict(r) for r in cur.fetchall()]
 
+    def list_agent_projects(self, username):
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT DISTINCT project FROM agent_sessions WHERE username = %s "
+                        "ORDER BY 1", (username,))
+            return [r[0] for r in cur.fetchall()]
+
     def get_session_spans(self, username, session_id, limit=5000):
-        """Every span of every trace in one aggregated session."""
+        """Every span of every trace in one aggregated session. session_id may
+        also be the id of any trace in it; each row carries the session_id."""
         with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
             cur.execute(agg.SESSION_SPANS_SQL, {"username": username, "session_id": session_id,
                                                 "limit": limit})

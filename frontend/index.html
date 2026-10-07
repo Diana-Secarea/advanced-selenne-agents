@@ -36,7 +36,7 @@
   <div class="ag-head">
     <span class="eyebrow reveal">🤖 AI AGENTS · SESSIONS</span>
     <h2 class="section-title reveal" data-delay="1">What your agents <span class="grad-text">actually did.</span></h2>
-    <p class="ag-lede reveal" data-delay="2">Every run your agents and chatbots report, newest first. Click one to see its timeline of model and tool calls.</p>
+    <p class="ag-lede reveal" data-delay="2">Every run your agents and chatbots report, newest activity first — runs that share a conversation are grouped into one session. Click one to see its timeline of model and tool calls.</p>
   </div>
 
   <div class="card ag-banner" id="entitleBanner" hidden>
@@ -66,9 +66,10 @@
     <table class="nx">
       <thead><tr>
         <th>Started</th><th>Project</th><th>Agent</th><th>Session</th>
-        <th class="num">Duration</th><th class="num">Spans</th><th class="num">Tool calls</th><th>Status</th>
+        <th class="num">Duration</th><th class="num">Spans</th><th class="num">Tool calls</th>
+        <th class="num">LLM calls</th><th class="num">Tokens</th><th title="Highest alert score (benign rules count as 0)">Score</th><th>Status</th>
       </tr></thead>
-      <tbody id="sessions"><tr><td colspan="8" class="ag-muted">Loading…</td></tr></tbody>
+      <tbody id="sessions"><tr><td colspan="11" class="ag-muted">Loading…</td></tr></tbody>
     </table>
   </div>
 
