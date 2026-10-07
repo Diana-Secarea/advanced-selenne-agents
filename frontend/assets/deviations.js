@@ -1,5 +1,6 @@
-/* Agent alerts — the SIEM Live Alerts page, for AI agents.
-   Data: /agents/api/alerts (this stack's own database — never Selenne's
+/* Deviations — the SIEM Live Alerts page, for AI agents: policy violations
+   (reported by the agent, or on its host) and unexplained host activity.
+   Data: /agents/api/deviations (this stack's own database — never Selenne's
    alert pipeline). Everything customer-controlled goes through esc(). */
 (function () {
   "use strict";
@@ -12,7 +13,8 @@
 
   let all = [], rules = {}, benign = new Set(), paused = false;
   const filters = { search: "", period: "all", sev: "all", level: 0, project: "all",
-                    agent: "all", sort: "score", hour: null, tag: null };
+                    agent: "all", sort: "score", hour: null, tag: null, cat: "all" };
+  const CATS = { reported: "policy · reported", host: "policy · host", unexplained: "unexplained" };
   let chTime, chSev, chRules, chTags;
 
   function toast(msg) {
@@ -31,7 +33,7 @@
   async function api(path, opts) {
     const r = await fetch(path, Object.assign({ credentials: "same-origin" }, opts || {}));
     const body = await r.json().catch(() => ({}));
-    if (r.status === 401) { location.href = "/login.html?next=/agents/alerts"; throw new Error("signed out"); }
+    if (r.status === 401) { location.href = "/login.html?next=/agents/deviations"; throw new Error("signed out"); }
     if (r.status === 402) { $("entitleBanner").hidden = false; throw new Error("not entitled"); }
     if (!r.ok) throw new Error(body.error || "HTTP " + r.status);
     return body;
@@ -60,7 +62,7 @@
     if (paused) return;
     const pill = document.querySelector(".status-pill");
     try {
-      const d = await api("/agents/api/alerts?hours=168&limit=1000");
+      const d = await api("/agents/api/deviations?hours=168&limit=1000");
       all = d.alerts;
       refreshDropdown("fProject", "all projects", all.map((a) => a.project));
       refreshDropdown("fAgent", "all agents", all.map((a) => a.agent_name));
@@ -87,6 +89,7 @@
                      (a.groups || []).join(" "), a.evidence_match].join(" ").toLowerCase();
         if (!txt.includes(filters.search)) return false;
       }
+      if (filters.cat !== "all" && a.category !== filters.cat) return false;
       if (filters.sev !== "all" && a.anomaly_label !== filters.sev) return false;
       if ((a.level || 0) < filters.level) return false;
       if (filters.project !== "all" && a.project !== filters.project) return false;
@@ -112,7 +115,7 @@
     const stream = $("stream");
     if (!rows.length) {
       stream.innerHTML = all.length
-        ? '<div class="card" style="text-align:center;padding:34px;color:var(--text-dim);">No alerts match the current filters.</div>'
+        ? '<div class="card" style="text-align:center;padding:34px;color:var(--text-dim);">No deviations match the current filters.</div>'
         : '<div class="card" style="text-align:center;padding:34px;color:var(--text-dim);">No agent alerts yet. Rules run on every trace your agents send — ' +
           '<a href="/agents/">see sessions</a> or <a href="/profile.html#agent-keys">create an ingestion key</a>.</div>';
       return;
@@ -122,6 +125,7 @@
       const tags = (a.groups || []).map((g) =>
         `<span class="tag" data-tag="${esc(g)}" title="filter by ${esc(g)}">${esc(g)}</span>`).join("");
       const meta = [
+        `<span class="dv-cat dv-${esc(a.category)}">${esc(CATS[a.category] || a.category)}</span>`,
         `<span>🤖 <b>${esc(a.agent_name)}</b></span>`,
         `<span>📁 <b>${esc(a.project)}</b></span>`,
         a.evidence_field ? `<span>🔎 ${esc(a.evidence_field)}</span>` : "",
@@ -145,7 +149,9 @@
           <div class="ac-actions">
             <span class="ac-subscore">rules v0</span>
             <button class="ac-btn" data-benign="${esc(a.rule_id)}">${isBenign ? "↩ Unmark" : "🛡 Benign"}</button>
-            ${a.trace_id ? `<a class="ac-btn primary" style="text-decoration:none" href="/agents/?trace=${encodeURIComponent(a.trace_id)}&span=${encodeURIComponent(a.span_id || "")}">🔎 Open session</a>` : ""}
+            ${a.trace_id ? `<a class="ac-btn primary" style="text-decoration:none" href="/agents/?trace=${encodeURIComponent(a.trace_id)}&span=${encodeURIComponent(a.span_id || "")}">🔎 Open session</a>`
+              : a.session_id ? `<a class="ac-btn primary" style="text-decoration:none" href="/agents/?session=${encodeURIComponent(a.session_id)}">🔎 Open session</a>` : ""}
+            ${a.source === "host" ? `<a class="ac-btn" style="text-decoration:none" href="/agents/activity?agent=${encodeURIComponent(a.agent_name || "")}&alerts=1">🛰 Activity</a>` : ""}
           </div>
         </div>
       </div>`;
@@ -253,6 +259,7 @@
   $("search").addEventListener("input", (e) => { clearTimeout(searchTimer); searchTimer = setTimeout(() => { filters.search = e.target.value.trim().toLowerCase(); renderAll(); }, 200); });
   $("fPeriod").addEventListener("change", (e) => { filters.period = e.target.value; renderAll(); });
   $("fSev").addEventListener("change", (e) => { filters.sev = e.target.value; renderAll(); });
+  $("fCat").addEventListener("change", (e) => { filters.cat = e.target.value; renderAll(); });
   $("fLevel").addEventListener("change", (e) => { filters.level = +e.target.value; renderAll(); });
   $("fProject").addEventListener("change", (e) => { filters.project = e.target.value; renderAll(); });
   $("fAgent").addEventListener("change", (e) => { filters.agent = e.target.value; renderAll(); });
@@ -260,6 +267,7 @@
   $("clearBtn").addEventListener("click", () => {
     Object.assign(filters, { search: "", period: "all", sev: "all", level: 0, project: "all", agent: "all", sort: "score", hour: null, tag: null });
     $("search").value = ""; $("fPeriod").value = "all"; $("fSev").value = "all"; $("fLevel").value = "0";
+    $("fCat").value = "all"; filters.cat = "all";
     $("fProject").value = "all"; $("fAgent").value = "all"; $("fSort").value = "score";
     renderAll(); toast("Filters cleared");
   });

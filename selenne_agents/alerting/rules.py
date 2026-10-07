@@ -105,10 +105,20 @@ def _window(text, start, end):
     return ("…" if a else "") + text[a:b] + ("…" if b < len(text) else "")
 
 
+# Hidden in evidence but not alerted on by themselves (AG-102): an
+# Authorization header or a password in a URL is normal plumbing, yet must
+# not be copied into an alert. Same set as the sensor's own masking.
+_MASK_ONLY = [
+    re.compile(r"\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]{8,}", re.I),
+    re.compile(r"(?<=://)([^/\s:@]+):[^/\s@]+(?=@)"),
+]
+
+
 def _mask_all_secrets(text):
     for _, rx in _SECRETS:
         text = rx.sub(lambda m: _mask(m.group(0)), text)
-    return text
+    text = _MASK_ONLY[0].sub(lambda m: _mask(m.group(0)), text)
+    return _MASK_ONLY[1].sub(lambda m: m.group(1) + ":…", text)
 
 
 def _fields(span):
@@ -238,7 +248,9 @@ def check_host_event(ev):
             out.append(Alert("AG-202", 13, 92, "Agent process ran a dangerous command",
                              ["owasp:LLM06"], {"field": "argv", "match": m.group(0),
                                                "excerpt": _mask_all_secrets(cmdline)[:4 * EXCERPT]}))
-        elif _HOST_EXEC.search(exe):
+        # the agent's own main process (python3 running it) is expected; the
+        # sensor marks it agent_root. What the agent starts is what counts.
+        elif _HOST_EXEC.search(exe) and not d.get("agent_root"):
             out.append(Alert("AG-203", 6, 45, f"Agent process started {exe.rsplit('/', 1)[-1]}",
                              ["owasp:LLM06"], {"field": "exe", "match": exe,
                                                "excerpt": _mask_all_secrets(cmdline)[:4 * EXCERPT]}))
@@ -263,4 +275,36 @@ RULES = {
     "AG-202": "Process ran a dangerous command (sensor)",
     "AG-203": "Process started a network/shell binary (sensor)",
     "AG-204": "Process connected to a public address (sensor)",
+    "AG-301": "Program started outside any tool call (unexplained)",
+    "AG-302": "Connection made outside any step (unexplained)",
+    "AG-303": "File opened outside any step (unexplained)",
 }
+
+
+# --- unexplained host activity (reconciliation) ------------------------------
+# The aggregator finds host events from an instrumented agent that none of its
+# spans accounts for: the machine shows it, the agent never reported it. That
+# gap is the deviation — not what the activity was.
+
+def check_unexplained(ev):
+    """The AG-30x alert for one unexplained host event (see store.reconcile_tick)."""
+    d = ev.get("detail") or {}
+    kind = ev.get("kind")
+    tags = ["recon:unexplained", "owasp:LLM06"]
+    if kind == "exec":
+        argv = d.get("argv")
+        cmdline = " ".join(map(str, argv)) if isinstance(argv, list) else str(argv or d.get("exe") or "")
+        return Alert("AG-301", 10, 70, "Agent started a program outside any tool call", tags,
+                     {"field": "argv", "match": str(d.get("exe") or ""),
+                      "excerpt": _mask_all_secrets(cmdline)[:4 * EXCERPT]})
+    if kind == "connect":
+        dest = f"{d.get('daddr', '?')}:{d.get('dport', '?')}"
+        what = f"{d['dest_service']} ({dest})" if d.get("dest_service") else dest
+        return Alert("AG-302", 9, 60, "Agent connected somewhere outside any step",
+                     tags + ["ops:egress"], {"field": "daddr", "match": dest,
+                                             "excerpt": f"{what} · {d.get('scope', '')}".strip(" ·")})
+    if kind == "open":
+        path = str(d.get("path") or "")
+        return Alert("AG-303", 6, 45, "Agent opened a file outside any step", tags,
+                     {"field": "path", "match": path, "excerpt": path[:4 * EXCERPT]})
+    return None

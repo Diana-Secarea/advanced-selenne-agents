@@ -70,6 +70,9 @@ class Settings:
     agg_batch: int = 20000
     agg_verify_interval: float = 3600.0
     agg_verify_window: float = 7200.0
+    # Reconciliation: host events are compared with spans once they are this
+    # old (spans for the same moment have arrived by then).
+    agg_reconcile_settle: float = 120.0
 
     max_body_bytes: int = 5 * MIB           # on the wire (compressed)
     max_decompressed_bytes: int = 20 * MIB  # after gzip — zip-bomb guard
@@ -118,6 +121,7 @@ class Settings:
             agg_batch=_int("AGG_BATCH", cls.agg_batch),
             agg_verify_interval=_float("AGG_VERIFY_INTERVAL", cls.agg_verify_interval),
             agg_verify_window=_float("AGG_VERIFY_WINDOW", cls.agg_verify_window),
+            agg_reconcile_settle=_float("AGG_RECONCILE_SETTLE", cls.agg_reconcile_settle),
             max_body_bytes=_int("INGEST_MAX_BODY_BYTES", cls.max_body_bytes),
             max_decompressed_bytes=_int("INGEST_MAX_DECOMPRESSED_BYTES", cls.max_decompressed_bytes),
             bind=os.environ.get("INGEST_BIND", cls.bind),

@@ -1,8 +1,9 @@
 """The aggregator loop.
 
 Each step runs one PostgresStore.aggregate_tick (one transaction, under an
-advisory lock, so a second replica just skips), and the periodic check
-(verify_recent) when it is due. A full page means a backlog: the next step
+advisory lock, so a second replica just skips), then one reconcile_tick —
+host activity no span explains becomes AG-301/302/303 — and the periodic
+check (verify_recent) when it is due. A full page means a backlog: the next step
 runs at once instead of after AGG_INTERVAL. A database outage backs off
 instead of crashing — every tick is idempotent, so nothing is lost by
 waiting, and the next one picks up where the watermarks stopped.
@@ -11,6 +12,7 @@ waiting, and the next one picks up where the watermarks stopped.
 import logging
 import time
 
+from ..alerting import for_unexplained
 from ..store import StoreUnavailable
 
 log = logging.getLogger("aggregate")
@@ -35,6 +37,8 @@ class Aggregator:
                 self._verify()
             stats = self.store.aggregate_tick(batch=self.settings.agg_batch,
                                               overlap_s=self.settings.agg_overlap)
+            recon = self.store.reconcile_tick(for_unexplained,
+                                              settle_s=self.settings.agg_reconcile_settle)
         except StoreUnavailable as e:
             return self._failed("database unavailable: %s", e)
         except Exception:
@@ -42,6 +46,11 @@ class Aggregator:
             # retry slowly rather than restart-looping the container
             return self._failed("aggregator step failed", exc_info=True)
         self.failures = 0
+        if recon is not None and recon.alerts:
+            log.info("reconcile: %d host events checked, %d unexplained, %d new deviations",
+                     recon.checked, recon.unexplained, recon.alerts,
+                     extra={"fields": {"event": "reconcile", "checked": recon.checked,
+                                       "unexplained": recon.unexplained, "alerts": recon.alerts}})
         if stats is None:
             log.debug("tick skipped: another aggregator holds the lock")
             return self.settings.agg_interval
@@ -54,7 +63,8 @@ class Aggregator:
                                        "host_events": stats.host_events, "alerts": stats.alerts,
                                        "sessions": stats.sessions, "processes": stats.processes,
                                        "more": stats.more, "new": stats.new, "seconds": round(stats.seconds, 3)}})
-        return 0.0 if stats.more else self.settings.agg_interval
+        more = stats.more or (recon is not None and recon.more)
+        return 0.0 if more else self.settings.agg_interval
 
     def run(self, stop):
         """Step until the threading.Event `stop` is set (SIGTERM)."""

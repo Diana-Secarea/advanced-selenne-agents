@@ -11,7 +11,7 @@ import pytest
 from selenne_agents.aggregate import Aggregator, build_online_indexes
 from selenne_agents.aggregate import __main__ as entry
 from selenne_agents.config import Settings
-from selenne_agents.store import StoreUnavailable, TickStats, VerifyStats
+from selenne_agents.store import ReconcileStats, StoreUnavailable, TickStats, VerifyStats
 
 SETTINGS = Settings(agg_interval=5, agg_batch=100, agg_verify_interval=3600,
                     agg_verify_window=7200)
@@ -22,11 +22,13 @@ def _stats(spans=0, more=False, new=None):
 
 
 class FakeStore:
-    def __init__(self, ticks=(), checks=()):
+    def __init__(self, ticks=(), checks=(), recons=()):
         self.ticks = list(ticks)        # TickStats | None | Exception, one per tick
         self.checks = list(checks)
         self.tick_args = []
         self.verify_args = []
+        self.recons = list(recons)
+        self.recon_args = []
 
     @staticmethod
     def _next(queue, default):
@@ -38,6 +40,10 @@ class FakeStore:
     def aggregate_tick(self, batch, overlap_s):
         self.tick_args.append((batch, overlap_s))
         return self._next(self.ticks, _stats())
+
+    def reconcile_tick(self, build_alerts, settle_s):
+        self.recon_args.append(settle_s)
+        return self._next(self.recons, ReconcileStats(0, 0, 0, False, 0.01))
 
     def verify_recent(self, window_s):
         self.verify_args.append(window_s)
@@ -80,6 +86,14 @@ def test_a_bug_is_logged_not_fatal(caplog):
     assert agg.step() == 5
     assert "bad sql" in caplog.text            # with the traceback
     assert agg.step() == 5 and agg.failures == 0
+
+
+def test_reconcile_runs_every_step_and_drains_a_backlog():
+    store = FakeStore(recons=[ReconcileStats(5000, 3, 3, True, 0.1), None])
+    agg = Aggregator(store, SETTINGS)
+    assert agg.step() == 0                     # a full reconcile page: go again
+    assert agg.step() == 5                     # skipped (lock): normal wait
+    assert store.recon_args == [SETTINGS.agg_reconcile_settle] * 2
 
 
 def test_check_runs_once_per_interval():

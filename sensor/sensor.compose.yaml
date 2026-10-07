@@ -1,0 +1,9 @@
+# selenne-sensor settings for docker-compose.yml. Only what differs from the
+# defaults is here — every setting, with its default: sensor.example.yaml.
+# After changing anything under files:, re-render the policies and restart
+# Tetragon: docker compose --profile sensor up -d --force-recreate sensor-policies tetragon
+ingest:
+  url: https://ingest.selenne.app   # SELENNE_SENSOR_INGEST_URL overrides it
+tetragon:
+  export_file: /var/run/tetragon/events.log
+state_dir: /var/lib/selenne-sensor

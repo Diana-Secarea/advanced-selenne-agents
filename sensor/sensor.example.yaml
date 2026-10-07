@@ -1,0 +1,58 @@
+# selenne-sensor settings. Every value shown is the default: delete what you
+# do not change. A list you set REPLACES the default list, so copy it first.
+# The ingestion key is never written here: export SELENNE_SENSOR_KEY=sk_sel_…
+
+ingest:
+  url: https://ingest.selenne.app        # on the same host as Selenne Agents: http://ingest:4318
+  key_env: SELENNE_SENSOR_KEY
+
+host: ""                                 # reported host name; default $NODE_NAME, then the hostname
+
+tetragon:
+  export_file: /var/run/tetragon/events.log
+
+state_dir: /var/lib/selenne-sensor       # saved position + spool of unsent batches
+
+# Which processes are agents. Zero-config: anything started with
+# OTEL_SERVICE_NAME (or service.name in OTEL_RESOURCE_ATTRIBUTES), named after
+# it. Children of an agent always count as that agent.
+agents:
+  zero_config: true
+  ignore_services: [dockerd, containerd, buildkitd, docker-proxy, selenne-sensor]
+  match: []                              # agents that do not use OTel, e.g.
+  #  - service: legacy-bot
+  #    binary: '/python3?$'              # regexp on the executable
+  #    args: 'bot\.py'                   # regexp on the command line
+
+# Which of an agent's connections are recorded, by where they go.
+network:
+  local: true                            # loopback: Ollama, a local database, …
+  private: true                          # 10/8, 172.16/12, 192.168/16, Docker networks
+  public: true
+  port_labels: {}                        # your own names, e.g. {7000: billing-api}
+
+files:
+  enabled: true
+  # filtered in the kernel (Tetragon only matches prefixes and suffixes)
+  skip_prefixes: [/usr/, /lib/, /lib64/, /bin/, /sbin/, /proc/, /sys/, /dev/, /run/,
+    /var/lib/docker/, /var/lib/containerd/, /opt/conda/pkgs/,
+    /etc/ld.so, /etc/localtime, /etc/passwd, /etc/group, /etc/nsswitch.conf, /etc/gai.conf,
+    /etc/hosts, /etc/resolv.conf, /etc/host.conf, /etc/ssl/, /etc/ca-certificates, /etc/pki/,
+    /etc/mime.types, /var/lib/postgresql/, /var/lib/mysql/, /var/lib/redis/, /var/log/]
+  skip_suffixes: [.py, .pyc, .so, .pth, .dist-info/METADATA, .mo, .js, .node]
+  # filtered by the sensor
+  skip_contains: [/site-packages/, /dist-packages/, /node_modules/, /__pycache__/, /.cache/]
+  skip_directories: true
+  # always recorded, wherever they are (path suffixes)
+  sensitive: [/.ssh/id_rsa, /.ssh/id_ed25519, /.ssh/id_ecdsa, /.ssh/authorized_keys,
+    /.aws/credentials, /.config/gcloud/credentials.db, /.kube/config, /.docker/config.json,
+    /.git-credentials, /.netrc, /.env, /etc/shadow, /etc/sudoers]
+
+shipping:
+  batch_max: 1000
+  flush_interval: 1s
+  hold: 10s                              # re-sorting window for Tetragon's out-of-order export
+  max_wait: 1m                           # an event waits this long for its process's start
+  spool_max_mb: 100                      # when Selenne is unreachable; oldest dropped first
+  heartbeat: 30s
+  timeout: 15s

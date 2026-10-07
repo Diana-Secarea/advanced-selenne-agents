@@ -1,0 +1,82 @@
+# selenne-sensor next to your AI agents, on a Linux host (kernel with BTF:
+# /sys/kernel/btf/vmlinux must exist). Everything is under the "sensor"
+# profile, so it starts only when asked for:
+#
+#   SELENNE_SENSOR_KEY=sk_sel_… docker compose --profile sensor up -d
+#
+# Three services: sensor-policies writes Tetragon's policies from
+# sensor.compose.yaml and exits; tetragon (privileged — it loads eBPF
+# programs) watches the kernel and writes events to a shared volume;
+# selenne-sensor (unprivileged) picks the agents' events and ships them.
+#
+# Selenne Agents' own docker-compose.yml includes this file; there the
+# sensor posts straight to the ingest container (SELENNE_SENSOR_INGEST_URL).
+
+x-sensor-image: &sensor-image
+  image: selenne-sensor:${SELENNE_SENSOR_VERSION:-local}
+  build:
+    context: .
+    args:
+      VERSION: ${SELENNE_SENSOR_VERSION:-local}
+
+services:
+  sensor-policies:
+    <<: *sensor-image
+    profiles: [sensor]
+    command: ["policies", "-out", "/policies"]
+    # root for this one-shot only: the shared volume may have been created
+    # by the tetragon container (root-owned) before this step runs
+    user: "0:0"
+    environment:
+      SELENNE_SENSOR_CONFIG: /etc/selenne-sensor/sensor.yaml
+    volumes:
+      - ./sensor.compose.yaml:/etc/selenne-sensor/sensor.yaml:ro
+      - tetragon-policies:/policies
+    restart: "no"
+
+  tetragon:
+    profiles: [sensor]
+    image: quay.io/cilium/tetragon:v1.7.1
+    restart: unless-stopped
+    privileged: true
+    pid: host
+    cgroup: host
+    entrypoint: ["tetragon"]
+    command:
+      - --tracing-policy-dir=/etc/tetragon/tetragon.tp.d
+      - --export-filename=/var/run/tetragon/events.log
+      - --export-file-perm=644
+      - --export-file-max-size-mb=50
+      - --export-file-max-backups=3
+      # only these two variables leave the kernel: how agents are recognised
+      - --enable-process-environment-variables
+      - --filter-environment-variables=OTEL_SERVICE_NAME,OTEL_RESOURCE_ATTRIBUTES
+    volumes:
+      - /sys/kernel/btf/vmlinux:/var/lib/tetragon/btf:ro
+      - tetragon-policies:/etc/tetragon/tetragon.tp.d:ro
+      - tetragon-export:/var/run/tetragon
+    depends_on:
+      sensor-policies:
+        condition: service_completed_successfully
+
+  selenne-sensor:
+    <<: *sensor-image
+    profiles: [sensor]
+    restart: unless-stopped
+    environment:
+      # no default on purpose: the sensor refuses to start without a key and says so
+      SELENNE_SENSOR_KEY: ${SELENNE_SENSOR_KEY:-}
+      SELENNE_SENSOR_INGEST_URL: ${SELENNE_SENSOR_INGEST_URL:-}
+      SELENNE_SENSOR_CONFIG: /etc/selenne-sensor/sensor.yaml
+    volumes:
+      - ./sensor.compose.yaml:/etc/selenne-sensor/sensor.yaml:ro
+      - /etc/hostname:/etc/host-hostname:ro       # the host's name, not the container's
+      - tetragon-export:/var/run/tetragon:ro
+      - sensor-state:/var/lib/selenne-sensor      # position + unsent batches
+    depends_on:
+      - tetragon
+
+volumes:
+  tetragon-policies:
+  tetragon-export:
+  sensor-state:

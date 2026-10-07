@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Agent Incidents — Selenne</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/agents/assets/selenne/style.css">
+<link rel="stylesheet" href="/agents/assets/console.css">
+</head>
+<body>
+
+<canvas id="particles"></canvas>
+<div class="aurora"><span></span><span></span><span></span></div>
+<div class="grid-overlay"></div>
+
+<div class="owner-line">⟡ owned by <b>Diana Secarea</b> ⟡</div>
+<nav class="nav">
+  <a class="brand" href="/agents/"><span class="logo">◈</span><em>SELENNE</em></a>
+  <a class="link" href="/agents/">Sessions</a>
+  <a class="link" href="/agents/activity">Activity</a>
+  <a class="link" href="/agents/deviations">Deviations</a>
+  <a class="link active" href="/agents/incidents">Incidents</a>
+  <a class="link" href="/profile.html#agent-keys">Ingestion keys</a>
+  <span class="spacer"></span>
+  <span class="status-pill"><span class="dot"></span>AI AGENTS</span>
+  <a class="link" id="navUser" href="/profile.html" hidden></a>
+  <a class="link" id="navOut" href="#" title="Sign out" aria-label="Sign out" hidden>
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><path d="m16 17 5-5-5-5M21 12H9"/></svg>
+  </a>
+</nav>
+
+<main class="page wrap">
+  <div class="ag-head">
+    <span class="eyebrow reveal">⚠ AI AGENTS · INCIDENTS</span>
+    <h2 class="section-title reveal" data-delay="1">What made your agent <span class="grad-text">go wrong.</span></h2>
+    <p class="ag-lede reveal" data-delay="2">A deviation together with its probable cause: the untrusted input — an injected instruction, a tool's output, a retrieved document, a fetched page — that came into the session before it. One cause and everything it led to is one incident.</p>
+  </div>
+
+  <div class="card ag-banner" id="entitleBanner" hidden>
+    <b>Selenne Agents isn't enabled on this account yet.</b>
+    It comes as an add-on to your Selenne plan — contact us from your
+    <a href="/profile.html">profile</a> to turn it on.
+  </div>
+
+  <div class="ag-tiles ac-tiles reveal" data-delay="1">
+    <div class="card ac-tile"><div class="stat-num ac-alert-num" id="tTotal">0</div><div class="stat-label">Incidents</div><div class="stat-sub" id="tAgents">—</div></div>
+    <div class="card ac-tile"><div class="stat-num" id="tInjection">0</div><div class="stat-label">Prompt injection</div><div class="stat-sub">a finding in the input</div></div>
+    <div class="card ac-tile"><div class="stat-num" id="tTool">0</div><div class="stat-label">Tool output</div><div class="stat-sub">followed what a tool returned</div></div>
+    <div class="card ac-tile"><div class="stat-num" id="tContent">0</div><div class="stat-label">Retrieved / web</div><div class="stat-sub">documents and pages</div></div>
+    <div class="card ac-tile"><div class="stat-num" id="tEffects">0</div><div class="stat-label">Effects</div><div class="stat-sub">deviations they caused</div></div>
+  </div>
+
+  <div class="ag-filters reveal" data-delay="2">
+    <label>WINDOW
+      <select id="fHours">
+        <option value="24">Last 24 hours</option>
+        <option value="168" selected>Last 7 days</option>
+        <option value="720">Last 30 days</option>
+      </select>
+    </label>
+    <span class="spacer"></span>
+    <span class="mono ag-updated" id="updated"></span>
+    <button class="btn btn-ghost ag-refresh" id="refresh" type="button">↻ Refresh</button>
+  </div>
+
+  <div id="incidents" class="in-list"><div class="card ag-muted" style="padding:24px">Loading…</div></div>
+
+  <footer class="footer"><b>SELENNE</b> · AI Agents · incidents = deviations + their probable cause, from the same sessions</footer>
+</main>
+
+<script src="/agents/assets/selenne/ui.js"></script>
+<script src="/agents/assets/selenne/product-switch.js"></script>
+<script src="/agents/assets/incidents.js"></script>
+</body>
+</html>

@@ -32,13 +32,24 @@ def for_spans(rows):
     return out
 
 
+def _host_alert(r, a):
+    return {"alert": a, "source_ref": _host_ref(r), "trace_id": None, "span_id": None,
+            "service_name": (r.get("detail") or {}).get("service_name"), "host": r["host"],
+            "ts_ns": r["ts_ns"]}
+
+
 def for_host_events(rows):
+    return [_host_alert(r, a) for r in rows for a in rules.check_host_event(r)]
+
+
+def for_unexplained(rows):
+    """AG-30x for host events the reconciliation found no span for. Rows
+    carry their tenant (username, project): one call spans every customer."""
     out = []
     for r in rows:
-        for a in rules.check_host_event(r):
-            out.append({"alert": a, "source_ref": _host_ref(r), "trace_id": None,
-                        "span_id": None, "service_name": None, "host": r["host"],
-                        "ts_ns": r["ts_ns"]})
+        a = rules.check_unexplained(r)
+        if a:
+            out.append(dict(_host_alert(r, a), username=r.get("username"), project=r.get("project")))
     return out
 
 

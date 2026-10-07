@@ -23,10 +23,12 @@ browser ── selenne.app/agents/ ──► console ─┴── session check 
 | Keys + `/internal/keys/verify` in Selenne, keys card on the profile page | **built** (Selenne repo) |
 | Console at `selenne.app/agents/` (`selenne_agents/console`) | **built** — reads the aggregated sessions |
 | Landing option, "Launch console ▾" and the SIEM ⇄ AI Agents switcher | **built** (Selenne repo) |
-| Alerts: detection rules v0 at ingest + `/agents/alerts` page (the SIEM Live Alerts layout) | **built** |
+| Deviations `/agents/deviations` (was Alerts): rules v0 at ingest + reconciliation (AG-30x) | **built** |
+| Incidents `/agents/incidents`: a deviation + its probable cause (the untrusted input before it) | **built** |
 | Session aggregation: the `aggregator` service fills `agent_sessions` / `agent_processes` (`selenne_agents/aggregate`) | **built** |
+| Activity page `/agents/activity`: everything the sensor saw agents do, with its alerts | **built** |
 | Scoring, reconciliation, agent RAG, reactor | not yet |
-| Sensor (sidecar) | not yet — the `/v1/host-events` endpoint already accepts its format |
+| Sensor `sensor/` — Tetragon + a Go shipper, `docker compose --profile sensor up -d` | **built** — see [sensor/README.md](sensor/README.md) |
 | Stripe add-on | not yet — `AGENTS_OPEN_BETA=1` in Selenne entitles everyone meanwhile |
 
 ## Console — `selenne.app/agents/`
@@ -37,7 +39,30 @@ that user's sessions. Signed out → `/login.html?next=/agents/`. It uses
 Selenne's own `/assets/style.css` and `/assets/product-switch.js`, so both
 consoles share one look and one SIEM ⇄ AI Agents menu.
 
-## Alerts — `selenne.app/agents/alerts`
+## Sessions · Deviations · Incidents
+
+Three pages, one data model — the same spans, host events and rule hits:
+
+1. **Sessions** — the timeline of what each agent did (monitoring).
+2. **Deviations** (`/agents/deviations`; `/agents/alerts` redirects) — every
+   rule hit, by type: a policy the agent's own spans broke (AG-1xx), one broken
+   on its host (AG-2xx), or host activity the agent never reported (AG-3xx).
+   Each one links to the session it happened in.
+3. **Incidents** (`/agents/incidents`) — a deviation with consequences
+   (score ≥ 50, not benign) plus its probable cause: the latest untrusted input
+   in the same session before it — a prompt-injection finding first, else a
+   tool's output, a retrieved document, a fetched page. One cause and all it
+   led to is one incident (the attack view).
+
+**Reconciliation** (in the aggregator, every round): a host event from an
+agent that sends spans, at a moment none of its spans covers, is unexplained —
+a program started outside any tool call (AG-301, 70), a connection (AG-302,
+60) or a file opened (AG-303, 45) outside any step. Matched by service name
+(the sensor's `OTEL_SERVICE_NAME`), ±1 s, once the event is
+`AGG_RECONCILE_SETTLE` (120 s) old so its spans have arrived. Agents with no
+spans are not reconciled (nothing to compare); their activity still shows.
+
+## Deviation rules
 
 Rules run on every ingested batch (`selenne_agents/alerting/rules.py`) and
 write to this stack's `agent_alerts` table — never to Selenne's alert
@@ -55,7 +80,8 @@ masked.
 | AG-105 | paste/exfiltration services or raw public IPs in URLs | 11 / 78 |
 | AG-106 | a code/shell execution tool was used | 7 / 55 |
 | AG-107 | a step ended in error | 3 / 25 |
-| AG-201…204 | sensor: secrets file opened, dangerous exec, shell/network binary, public connect | 4–13 |
+| AG-201…204 | sensor: secrets file opened, dangerous exec, shell/network binary started by the agent, public connect | 4–13 |
+| AG-301…303 | reconciliation: program / connection / file the agent's spans never mention | 6–10 / 45–70 |
 
 "🛡 Benign" on a card zero-scores that rule for the user (never hides it),
 like the SIEM's benign rules. Rules are the stand-in until per-agent scoring
@@ -76,6 +102,16 @@ the presentation sections of Selenne's `app.js` (particles, reveals, counters,
 card glow, tilt, transitions, nav shrink, cinematic layer). SIEM behaviour —
 list managers, collector downloads, the SIEM auth redirect — is excluded, and
 the script fails if any of it leaks in. Re-run it whenever Selenne's UI changes.
+
+## Activity — `selenne.app/agents/activity`
+
+What the host sensor saw agents do: programs started (`exec`), files opened,
+connections (labelled local / private / public and by service — `ollama`,
+`postgres`, `qdrant (container …)`), listening sockets and exits — the normal
+traffic, not only what raised an alert; any alert an event raised is shown on
+its row. A process reading a whole folder folds into one expandable row. A
+strip at the top shows each sensor's last heartbeat. The agent's own main
+process is marked `agent` and does not raise AG-203; what it starts does.
 
 ## Aggregator — sessions from raw spans
 
@@ -279,9 +315,12 @@ selenne_agents/
   store/
     postgres.py       all database access
     aggregates.py     the aggregator's SQL (one round, the check)
+    reconcile.py      host activity no span explains (AG-30x)
+    activity.py       the Activity page's reads
+    deviations.py     Deviations + Incidents (probable cause) reads
     schema.sql        tables, applied by ingest at startup
   console/
-    app.py            /agents/ page + /agents/api/* (sessions, one session, alerts)
+    app.py            pages + /agents/api/*: sessions, activity, deviations, incidents
     selenne_session.py  cookie -> Selenne /api/auth/me, cached
   logging_setup.py    stderr + own JSON files (never Selenne's collector files)
 frontend/             the console UI, served at /agents/ (FRONTEND_DIR)

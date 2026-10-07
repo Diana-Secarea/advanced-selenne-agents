@@ -99,12 +99,12 @@ CREATE TABLE IF NOT EXISTS agent_benign_rules (
 -- below last_id received shortly before the previous tick (scanned_at), which
 -- catches a batch that was still in flight when the aggregator passed its id.
 CREATE TABLE IF NOT EXISTS aggregator_state (
-    name        text PRIMARY KEY,               -- spans | host_events | agent_alerts
+    name        text PRIMARY KEY,               -- spans | host_events | agent_alerts | reconcile
     last_id     bigint      NOT NULL DEFAULT 0,
     scanned_at  timestamptz,                    -- database time of the last tick
     updated_at  timestamptz NOT NULL DEFAULT now()
 );
-INSERT INTO aggregator_state (name) VALUES ('spans'), ('host_events'), ('agent_alerts')
+INSERT INTO aggregator_state (name) VALUES ('spans'), ('host_events'), ('agent_alerts'), ('reconcile')
     ON CONFLICT DO NOTHING;
 
 -- Which session each trace belongs to. A trace carrying gen_ai.conversation.id

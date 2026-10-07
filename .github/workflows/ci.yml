@@ -38,3 +38,19 @@ jobs:
         run: lint-imports
       - name: Tests
         run: pytest -q -rs
+
+  sensor:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: sensor
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: sensor/go.mod
+          cache-dependency-path: sensor/go.sum
+      - run: test -z "$(gofmt -l .)" || (gofmt -l . && exit 1)
+      - run: go vet ./...
+      - run: go test ./...
+      - run: CGO_ENABLED=0 go build -o bin/selenne-sensor ./cmd/selenne-sensor

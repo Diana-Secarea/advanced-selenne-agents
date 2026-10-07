@@ -10,6 +10,13 @@
 
 name: selenne-agents
 
+# The host sensor (Tetragon + selenne-sensor), only with --profile sensor:
+#   docker compose --profile sensor up -d
+# needs SELENNE_SENSOR_KEY in .env; here it posts to the ingest container.
+include:
+  - path: sensor/docker-compose.yml
+    env_file: .env
+
 services:
   postgres:
     image: postgres:17-alpine

@@ -11,7 +11,10 @@ import psycopg2
 import psycopg2.pool
 from psycopg2.extras import Json, RealDictCursor, execute_values
 
+from . import activity
 from . import aggregates as agg
+from . import deviations as dev
+from . import reconcile as recon
 
 log = logging.getLogger("store")
 
@@ -99,6 +102,11 @@ ONLINE_INDEXES = (
     ("host_events_received", "host_events (received_at)"),
     ("agent_alerts_trace", "agent_alerts (username, project, trace_id)"),
     ("agent_alerts_created", "agent_alerts (created_at)"),
+    # the Activity page: a user's recent host events, and each one's alerts
+    ("host_events_recent", "host_events (username, ts_ns DESC)"),
+    ("agent_alerts_source", "agent_alerts (username, source_ref)"),
+    # reconciliation: an agent's spans around a moment
+    ("spans_service_time", "spans (username, service_name, start_ns)"),
 )
 
 
@@ -111,6 +119,15 @@ class TickStats:
     processes: int      # process rows upserted
     more: bool          # a page was full: tick again straight away
     new: int            # rows past the watermarks (the rest are catch-up re-reads)
+    seconds: float
+
+
+@dataclass(frozen=True)
+class ReconcileStats:
+    checked: int        # settled host events looked at
+    unexplained: int    # of those, no span of the agent covered
+    alerts: int         # AG-30x alerts stored (new)
+    more: bool          # a page was full
     seconds: float
 
 
@@ -281,6 +298,58 @@ class PostgresStore:
                                            "limit": limit})
             return [dict(r) for r in cur.fetchall()]
 
+    # --- activity (sensor host events) -----------------------------------------
+
+    def list_activity(self, username, since_ns, before_ns=None, project=None, kind=None,
+                      agent=None, host=None, scope=None, alerts_only=False, limit=200):
+        """Host events newest first, each with its alerts. before_ns pages back."""
+        with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(activity.ACTIVITY_SQL, {
+                "username": username, "since_ns": since_ns,
+                "before_ns": before_ns if before_ns is not None else 2**63 - 1,
+                "project": project, "kind": kind, "agent": agent, "host": host, "scope": scope,
+                "alerts_only": bool(alerts_only), "limit": limit})
+            return [dict(r) for r in cur.fetchall()]
+
+    def activity_facets(self, username, since_ns, project=None):
+        """{'agent': {name: n}, 'host': {...}, 'kind': {...}, 'scope': {...},
+        'alerts': {'events': n}} — n: events that raised at least one alert."""
+        out = {"agent": {}, "host": {}, "kind": {}, "scope": {}, "alerts": {}}
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute(activity.FACETS_SQL, {"username": username, "since_ns": since_ns,
+                                              "project": project})
+            for facet, value, n in cur.fetchall():
+                if value:
+                    out[facet][value] = n
+        return out
+
+    def list_sensors(self, username, since_ns):
+        """The latest heartbeat of each sensor host."""
+        with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(activity.SENSORS_SQL, {"username": username, "since_ns": since_ns})
+            return [dict(r) for r in cur.fetchall()]
+
+    # --- deviations / incidents (see deviations.py) ----------------------------
+
+    DEVIATION_PREFIXES = {"reported": "AG-1%", "host": "AG-2%", "unexplained": "AG-3%"}
+
+    def list_deviations(self, username, since_ns, category=None, limit=500):
+        """Rule hits newest first, each placed in its session (session_id may
+        be None). category: reported | host | unexplained."""
+        with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(dev.DEVIATIONS_SQL, {"username": username, "since_ns": since_ns,
+                                             "prefix": self.DEVIATION_PREFIXES.get(category),
+                                             "limit": limit})
+            return [dict(r) for r in cur.fetchall()]
+
+    def list_incident_rows(self, username, since_ns, min_score=50, limit=500):
+        """One row per consequential deviation that has a probable cause in
+        its session; the console groups them by session + cause."""
+        with self._conn() as conn, conn.cursor(cursor_factory=RealDictCursor) as cur:
+            cur.execute(dev.INCIDENTS_SQL, {"username": username, "since_ns": since_ns,
+                                            "min_score": min_score, "limit": limit})
+            return [dict(r) for r in cur.fetchall()]
+
     def list_benign_rules(self, username):
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT rule_id FROM agent_benign_rules WHERE username = %s ORDER BY 1",
@@ -369,6 +438,38 @@ class PostgresStore:
         with self._conn() as conn, conn.cursor() as cur:
             cur.execute("SELECT to_regclass('aggregator_state') IS NOT NULL")
             return cur.fetchone()[0]
+
+    def reconcile_tick(self, build_alerts, settle_s=120.0, slack_s=1.0, batch=5000):
+        """Flag settled host events no span explains (see reconcile.py).
+        build_alerts(rows) turns them into alerts (alerting.for_unexplained):
+        the rules live with the other rules, not in the store. One
+        transaction under the aggregator lock: alerts and the watermark move
+        together. Returns ReconcileStats, or None while a tick holds the lock."""
+        t0 = time.monotonic()
+        with self._conn() as conn, conn.cursor() as cur:
+            if not self._agg_lock(cur):
+                return None
+            cur.execute("SELECT last_id FROM aggregator_state WHERE name = 'reconcile'")
+            row = cur.fetchone()
+            last_id = row[0] if row else 0
+            cur.execute(recon.PAGE_SQL, {"last_id": last_id, "settle": settle_s, "batch": batch})
+            upto, checked = cur.fetchone()
+            rows = []
+            if checked:
+                cur.execute(recon.UNEXPLAINED_SQL, {"last_id": last_id, "upto": upto,
+                                                    "slack_ns": int(slack_s * 1e9)})
+                cols = [c.name for c in cur.description]
+                rows = [dict(zip(cols, r)) for r in cur.fetchall()]
+            found = build_alerts(rows) if rows else []
+            stored = 0
+            if found:
+                values = [(f["username"], f["project"], f["alert"].rule_id, f["alert"].level,
+                           f["alert"].score, f["alert"].title, Json(f["alert"].tags),
+                           Json(f["alert"].evidence), f["source_ref"], f["trace_id"], f["span_id"],
+                           f["service_name"], f["host"], f["ts_ns"]) for f in found]
+                stored = len(execute_values(cur, _ALERT_SQL, values, fetch=True))
+            cur.execute(agg.MARK_SQL, {"name": "reconcile", "last_id": upto})
+        return ReconcileStats(checked, len(rows), stored, checked >= batch, time.monotonic() - t0)
 
     def aggregator_lag(self):
         """Seconds since the last completed tick, None if none has run yet."""

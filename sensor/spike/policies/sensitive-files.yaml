@@ -1,0 +1,37 @@
+# Opens of credential / secrets files, filtered in the kernel: Python alone
+# opens thousands of .py files at start-up, so only these paths leave it.
+# security_file_open is the LSM hook — it runs after the permission check,
+# so it sees opens that actually succeeded.
+apiVersion: cilium.io/v1alpha1
+kind: TracingPolicy
+metadata:
+  name: selenne-sensitive-files
+spec:
+  kprobes:
+  - call: "security_file_open"
+    syscall: false
+    args:
+    - index: 0
+      type: "file"
+    selectors:
+    - matchArgs:
+      - index: 0
+        operator: "Postfix"
+        values:
+        - "/.ssh/id_rsa"
+        - "/.ssh/id_ed25519"
+        - "/.ssh/id_ecdsa"
+        - "/.aws/credentials"
+        - "/.config/gcloud/credentials.db"
+        - "/.kube/config"
+        - "/.docker/config.json"
+        - "/.git-credentials"
+        - "/.netrc"
+        - "/.env"
+    - matchArgs:
+      - index: 0
+        operator: "Prefix"
+        values:
+        - "/etc/shadow"
+        - "/etc/sudoers"
+        - "/root/.ssh/"

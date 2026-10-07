@@ -11,8 +11,14 @@ The pages and their assets live in the repo's top-level frontend/ directory
     GET /agents/api/sessions?project=&hours=&limit=
     GET /agents/api/sessions/<id>         every span of one session (id: a
                                           session id, or any trace id in it)
-    GET /agents/alerts                    the alerts page
-    GET /agents/api/alerts?hours=&limit=  alerts, Selenne-alert shaped
+    GET /agents/activity                  the activity page (what the sensor saw)
+    GET /agents/api/activity?hours=&limit=&before_ms=&project=&kind=&agent=&host=&scope=&alerts=1
+    GET /agents/api/activity/facets?hours=&project=   filter menus + sensor status
+    GET /agents/deviations                the deviations page (/agents/alerts redirects here)
+    GET /agents/api/deviations?hours=&limit=&category=   rule hits, Selenne-alert
+                                          shaped, each with its session (/api/alerts: same)
+    GET /agents/incidents                 the incidents page
+    GET /agents/api/incidents?hours=      deviations grouped with their probable cause
     GET /agents/api/rules                 rule catalogue + this user's benign rules
     POST/DELETE /agents/api/benign-rules[/<rule_id>]
     GET /agents/health
@@ -25,7 +31,9 @@ import time
 
 from flask import Flask, jsonify, redirect, request, send_from_directory
 
-from ..alerting.rules import RULES, label_for
+import hashlib
+
+from ..alerting.rules import RULES, _mask_all_secrets, label_for
 from ..store import StoreUnavailable
 from .selenne_session import COOKIE, SessionUnavailable
 
@@ -85,11 +93,26 @@ def _span_json(r):
             "resource": r["resource"]}
 
 
+DEVIATION_CATEGORIES = ("reported", "host", "unexplained")
+
+
+def _category(rule_id):
+    """AG-1xx: the agent's own spans broke a policy; AG-2xx: the host did;
+    AG-3xx: the host did something the agent never reported."""
+    return {"AG-1": "reported", "AG-2": "host", "AG-3": "unexplained"}.get(rule_id[:4], "reported")
+
+
 def _alert_json(r):
     """Same field names as Selenne's /api/alerts/scored, so the Agents alert
     page reads like the SIEM one. A benign rule zero-scores its alerts."""
     ev = r["evidence"] or {}
-    return {"id": r["id"], "timestamp_ms": _ms(r["ts_ns"]), "rule_id": r["rule_id"],
+    ref = r.get("source_ref") or ""
+    session = r.get("session_id")
+    return {"category": _category(r["rule_id"]),
+            "source": "host" if ref.startswith("host:") else "span",
+            "event_id": ref.split(":", 2)[2] if ref.startswith("host:") else None,
+            "session_id": session.strip() if session else None,
+            "id": r["id"], "timestamp_ms": _ms(r["ts_ns"]), "rule_id": r["rule_id"],
             "rule_description": r["title"], "level": r["level"],
             "anomaly_score": 0 if r["benign"] else r["score"],
             "anomaly_label": "BENIGN" if r["benign"] else label_for(r["score"]),
@@ -98,6 +121,79 @@ def _alert_json(r):
             "evidence_field": ev.get("field"), "evidence_match": ev.get("match"),
             "trace_id": r["trace_id"].strip() if r["trace_id"] else None,
             "span_id": r["span_id"].strip() if r["span_id"] else None, "host": r["host"]}
+
+
+ACTIVITY_KINDS = ("exec", "exit", "open", "connect", "listen")
+SCOPES = ("local", "private", "public")
+# what the sensor sends that the page shows as fields (the rest is in detail)
+_ACTIVITY_FIELDS = ("service_name", "exe", "argv", "cwd", "path", "daddr", "dport", "saddr", "sport",
+                    "protocol", "scope", "dest_service", "status", "signal", "duration_ms",
+                    "agent_root", "exec_id")
+
+
+def _activity_json(r):
+    d = r["detail"] or {}
+    out = {"id": r["id"], "ts_ms": _ms(r["ts_ns"]), "project": r["project"], "host": r["host"],
+           "pid": r["pid"], "ppid": r["ppid"], "container_id": r["container_id"], "kind": r["kind"],
+           "detail": d}
+    for f in _ACTIVITY_FIELDS:
+        out[f] = d.get(f)
+    out["agent"] = out.pop("service_name")
+    out["alerts"] = [{"id": a["id"], "rule_id": a["rule_id"], "title": a["title"],
+                      "score": 0 if a["benign"] else a["score"],
+                      "label": "BENIGN" if a["benign"] else label_for(a["score"])}
+                     for a in r["alerts"] or []]
+    return out
+
+
+def _sensor_json(r, now_ms):
+    d = r["detail"] or {}
+    last = _ms(r["ts_ns"])
+    return {"host": r["host"], "project": r["project"], "last_ms": last,
+            "age_s": max(0, round((now_ms - last) / 1000)), "version": d.get("sensor_version"),
+            "stats": d.get("stats") or {}}
+
+
+CAUSES = {"prompt_injection": "Prompt injection", "tool_output": "Tool output",
+          "retrieved_content": "Retrieved content", "web_content": "Web content"}
+
+
+def _incidents(rows):
+    """Group consequential deviations by session + probable cause: one
+    injected page that made the agent run a command and read a key is one
+    incident with two effects. Newest incident first."""
+    groups = {}
+    for r in rows:
+        key = (r["session_id"].strip(), r["cause_trace_id"].strip(), r["cause_span_id"].strip())
+        g = groups.get(key)
+        if g is None:
+            g = groups[key] = {
+                "id": hashlib.sha256(":".join(key).encode()).hexdigest()[:16],
+                "session_id": key[0], "session_root": r.get("root_name"),
+                "session_kind": r.get("session_kind"), "agent": r["service_name"],
+                "project": r["project"],
+                "cause": {"kind": r["cause_kind"], "label": CAUSES.get(r["cause_kind"], r["cause_kind"]),
+                          "trace_id": key[1], "span_id": key[2], "name": r["cause_name"],
+                          "tool": r["cause_tool"], "url": r["cause_url"], "ts_ms": _ms(r["cause_ns"]),
+                          "excerpt": _mask_all_secrets(r["cause_excerpt"]) if r["cause_excerpt"] else None,
+                          "preview": _mask_all_secrets(r["cause_preview"]) if r["cause_preview"] else None},
+                "effects": []}
+        ev = r["evidence"] or {}
+        g["effects"].append({"id": r["id"], "rule_id": r["rule_id"], "title": r["title"],
+                             "score": r["score"], "label": label_for(r["score"]),
+                             "category": _category(r["rule_id"]), "ts_ms": _ms(r["ts_ns"]),
+                             "source": "host" if r["source_ref"].startswith("host:") else "span",
+                             "host": r["host"], "excerpt": ev.get("excerpt"),
+                             "trace_id": r["trace_id"].strip() if r["trace_id"] else None,
+                             "span_id": r["span_id"].strip() if r["span_id"] else None})
+    out = []
+    for g in groups.values():
+        g["effects"].sort(key=lambda e: e["ts_ms"])
+        g["score"] = max(e["score"] for e in g["effects"])
+        g["label"] = label_for(g["score"])
+        g["first_ms"], g["last_ms"] = g["effects"][0]["ts_ms"], g["effects"][-1]["ts_ms"]
+        out.append(g)
+    return sorted(out, key=lambda g: -g["last_ms"])
 
 
 def create_console_app(settings, sessions, store, clock=time.time):
@@ -160,9 +256,90 @@ def create_console_app(settings, sessions, store, clock=time.time):
     def page():
         return _page("index.html", LOGIN_URL)
 
+    @app.get("/agents/activity")
+    def activity_page():
+        return _page("activity.html", "/login.html?next=/agents/activity")
+
+    def _window():
+        """(since_ns, hours) from ?hours=, or raises ValueError."""
+        hours = min(max(float(request.args.get("hours", 24)), 0.1), 24 * 90)
+        return int((clock() - hours * 3600) * 1e9), hours
+
+    def _short_arg(name, allowed=None):
+        v = (request.args.get(name) or "").strip() or None
+        if v is None:
+            return None
+        if (allowed and v not in allowed) or len(v) > 200:
+            raise ValueError(f"bad {name}")
+        return v
+
+    @app.get("/agents/api/activity")
+    def activity_list():
+        user, err = _api_user()
+        if err:
+            return err
+        try:
+            since_ns, hours = _window()
+            limit = min(max(int(request.args.get("limit", 200)), 1), 1000)
+            before = request.args.get("before_ms")
+            before_ns = int(float(before) * 1e6) if before else None
+            filters = {"kind": _short_arg("kind", ACTIVITY_KINDS),
+                       "scope": _short_arg("scope", SCOPES),
+                       "agent": _short_arg("agent"), "host": _short_arg("host"),
+                       "project": _short_arg("project")}
+        except ValueError as e:
+            return jsonify({"error": str(e) if str(e).startswith("bad ") else
+                            "hours, limit and before_ms must be numbers"}), 400
+        if filters["project"] and not _PROJECT_RE.match(filters["project"]):
+            return jsonify({"error": "bad project"}), 400
+        rows = store.list_activity(user["username"], since_ns, before_ns=before_ns, limit=limit,
+                                   alerts_only=request.args.get("alerts") == "1", **filters)
+        return jsonify({"events": [_activity_json(r) for r in rows], "hours": hours,
+                        "limit": limit, "more": len(rows) == limit})
+
+    @app.get("/agents/api/activity/facets")
+    def activity_facets():
+        user, err = _api_user()
+        if err:
+            return err
+        try:
+            since_ns, hours = _window()
+            project = _short_arg("project")
+        except ValueError:
+            return jsonify({"error": "hours must be a number"}), 400
+        if project and not _PROJECT_RE.match(project):
+            return jsonify({"error": "bad project"}), 400
+        now_ms = clock() * 1000
+        sensors = store.list_sensors(user["username"], int((clock() - 24 * 3600) * 1e9))
+        return jsonify({"facets": store.activity_facets(user["username"], since_ns, project=project),
+                        "sensors": [_sensor_json(s, now_ms) for s in sensors], "hours": hours})
+
     @app.get("/agents/alerts")
     def alerts_page():
-        return _page("alerts.html", "/login.html?next=/agents/alerts")
+        # Alerts became Deviations; old links and bookmarks still land
+        qs = request.query_string.decode()
+        return redirect("/agents/deviations" + ("?" + qs if qs else ""), code=301)
+
+    @app.get("/agents/deviations")
+    def deviations_page():
+        return _page("deviations.html", "/login.html?next=/agents/deviations")
+
+    @app.get("/agents/incidents")
+    def incidents_page():
+        return _page("incidents.html", "/login.html?next=/agents/incidents")
+
+    @app.get("/agents/api/incidents")
+    def incidents_list():
+        user, err = _api_user()
+        if err:
+            return err
+        try:
+            hours = min(max(float(request.args.get("hours", 168)), 0.1), 24 * 90)
+        except ValueError:
+            return jsonify({"error": "hours must be a number"}), 400
+        since_ns = int((clock() - hours * 3600) * 1e9)
+        rows = store.list_incident_rows(user["username"], since_ns)
+        return jsonify({"incidents": _incidents(rows), "hours": hours})
 
     @app.get("/agents/assets/<path:name>")
     def asset(name):
@@ -244,6 +421,7 @@ def create_console_app(settings, sessions, store, clock=time.time):
         return jsonify({"session_id": session_id, "traces": traces,
                         "spans": [_span_json(s) for s in spans]})
 
+    @app.get("/agents/api/deviations")
     @app.get("/agents/api/alerts")
     def alerts_list():
         user, err = _api_user()
@@ -255,8 +433,12 @@ def create_console_app(settings, sessions, store, clock=time.time):
         except ValueError:
             return jsonify({"error": "hours and limit must be numbers"}), 400
         since_ns = int((clock() - hours * 3600) * 1e9)
-        rows = store.list_alerts(user["username"], since_ns, limit=limit)
-        return jsonify({"alerts": [_alert_json(r) for r in rows], "hours": hours})
+        category = request.args.get("category") or None
+        if category is not None and category not in DEVIATION_CATEGORIES:
+            return jsonify({"error": "bad category"}), 400
+        rows = store.list_deviations(user["username"], since_ns, category=category, limit=limit)
+        items = [_alert_json(r) for r in rows]
+        return jsonify({"alerts": items, "deviations": items, "hours": hours})
 
     @app.get("/agents/api/rules")
     def rules_catalogue():

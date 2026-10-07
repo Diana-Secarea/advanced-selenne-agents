@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Agent Alerts — Selenne</title>
+<title>Agent Deviations — Selenne</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.2/dist/chart.umd.min.js"></script>
@@ -22,7 +22,9 @@
 <nav class="nav">
   <a class="brand" href="/agents/"><span class="logo">◈</span><em>SELENNE</em></a>
   <a class="link" href="/agents/">Sessions</a>
-  <a class="link active" href="/agents/alerts">Alerts</a>
+  <a class="link" href="/agents/activity">Activity</a>
+  <a class="link active" href="/agents/deviations">Deviations</a>
+  <a class="link" href="/agents/incidents">Incidents</a>
   <a class="link" href="/profile.html#agent-keys">Ingestion keys</a>
   <span class="spacer"></span>
   <span class="status-pill"><span class="dot"></span>STREAMING</span>
@@ -35,8 +37,9 @@
 <main class="page wrap">
 
   <div class="page-head" style="padding:38px 0 10px;">
-    <span class="eyebrow reveal">⬤ AGENT ALERT DASHBOARD</span>
-    <h2 class="section-title reveal" data-delay="1">Every agent alert, <span class="grad-text">scored &amp; explained.</span></h2>
+    <span class="eyebrow reveal">⬤ AGENT DEVIATIONS</span>
+    <h2 class="section-title reveal" data-delay="1">Where agents <span class="grad-text">left the rules.</span></h2>
+    <p class="ag-lede reveal" data-delay="2">Policy violations — in what the agent reported, or on its host — and host activity the agent never reported. Each one links to the session it happened in; the ones with a probable cause become <a href="/agents/incidents">incidents</a>.</p>
   </div>
 
   <div class="card ag-banner" id="entitleBanner" hidden>
@@ -54,7 +57,7 @@
 
   <!-- Report cards -->
   <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:12px;margin:14px 0 18px;" class="ag-tiles reveal">
-    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;" id="rTotal">0</div><div class="stat-label">Total Alerts</div><div class="stat-sub" id="rAgents">—</div></div>
+    <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;" id="rTotal">0</div><div class="stat-label">Deviations</div><div class="stat-sub" id="rAgents">—</div></div>
     <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--red);" id="rHigh">0</div><div class="stat-label">Critical / High</div><div class="stat-sub" id="rHighPct">—</div></div>
     <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--amber);" id="rPoss">0</div><div class="stat-label">Possible</div><div class="stat-sub" id="rPossPct">—</div></div>
     <div class="card" style="padding:16px;"><div class="stat-num" style="font-size:30px;-webkit-text-fill-color:var(--green);" id="rNorm">0</div><div class="stat-label">Normal</div><div class="stat-sub" id="rNormPct">—</div></div>
@@ -64,7 +67,7 @@
 
   <!-- Charts (4) -->
   <div class="ag-charts reveal" style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;">
-    <div class="card"><h3 style="font-size:15px;">📈 Alert Timeline — last 24 h</h3><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">click a bar to filter that hour</div><div class="chart-box"><canvas id="chTime"></canvas></div></div>
+    <div class="card"><h3 style="font-size:15px;">📈 Deviation Timeline — last 24 h</h3><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">click a bar to filter that hour</div><div class="chart-box"><canvas id="chTime"></canvas></div></div>
     <div class="card"><h3 style="font-size:15px;">🧠 Severity Distribution</h3><div style="font-size:11px;color:var(--text-dim);margin-bottom:8px;">click to filter</div><div class="chart-box"><canvas id="chSev"></canvas></div></div>
   </div>
   <div class="ag-charts reveal" data-delay="1" style="display:grid;grid-template-columns:1.4fr 1fr;gap:16px;margin-top:16px;">
@@ -79,6 +82,8 @@
         <input class="nx-input" id="search" placeholder="🔎 search…" style="width:100%;"></label>
       <label><div class="stat-label" style="margin-bottom:6px;">Period</div>
         <select class="nx-select" id="fPeriod"><option value="all">all</option><option value="1h">1h</option><option value="6h">6h</option><option value="24h">24h</option><option value="7d">7d</option></select></label>
+      <label><div class="stat-label" style="margin-bottom:6px;">Type</div>
+        <select class="nx-select" id="fCat"><option value="all">all</option><option value="reported">policy · reported by the agent</option><option value="host">policy · on the host</option><option value="unexplained">unexplained activity</option></select></label>
       <label><div class="stat-label" style="margin-bottom:6px;">Severity</div>
         <select class="nx-select" id="fSev"><option value="all">all</option><option value="CRITICAL">critical</option><option value="HIGH">high</option><option value="POSSIBLE">possible</option><option value="NORMAL">normal</option><option value="BENIGN">benign</option></select></label>
       <label><div class="stat-label" style="margin-bottom:6px;">Min level</div>
@@ -97,11 +102,11 @@
   <!-- Alert stream -->
   <div id="stream" style="display:flex;flex-direction:column;gap:10px;margin-top:16px;"></div>
 
-  <footer class="footer"><b>SELENNE</b> · AI Agents · live data from /agents/api/alerts · detection rules v0 (OWASP LLM Top 10 · MITRE ATLAS)</footer>
+  <footer class="footer"><b>SELENNE</b> · AI Agents · live data from /agents/api/deviations · rules v0 + reconciliation (OWASP LLM Top 10 · MITRE ATLAS)</footer>
 </main>
 
 <script src="/agents/assets/selenne/ui.js"></script>
 <script src="/agents/assets/selenne/product-switch.js"></script>
-<script src="/agents/assets/alerts.js"></script>
+<script src="/agents/assets/deviations.js"></script>
 </body>
 </html>
