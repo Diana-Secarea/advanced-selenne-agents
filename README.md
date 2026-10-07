@@ -24,7 +24,8 @@ browser ── selenne.app/agents/ ──► console ─┴── session check 
 | Console skeleton at `selenne.app/agents/` (`selenne_agents/console`) | **built** — sessions = traces for now |
 | Landing option, "Launch console ▾" and the SIEM ⇄ AI Agents switcher | **built** (Selenne repo) |
 | Alerts: detection rules v0 at ingest + `/agents/alerts` page (the SIEM Live Alerts layout) | **built** |
-| Session aggregation, scoring, reconciliation, agent RAG, reactor | not yet |
+| Session aggregation: the `aggregator` service fills `agent_sessions` / `agent_processes` (`selenne_agents/aggregate`) | **built**, the console doesn't read it yet |
+| Scoring, reconciliation, agent RAG, reactor | not yet |
 | Sensor (sidecar) | not yet — the `/v1/host-events` endpoint already accepts its format |
 | Stripe add-on | not yet — `AGENTS_OPEN_BETA=1` in Selenne entitles everyone meanwhile |
 
@@ -76,6 +77,39 @@ card glow, tilt, transitions, nav shrink, cinematic layer). SIEM behaviour —
 list managers, collector downloads, the SIEM auth redirect — is excluded, and
 the script fails if any of it leaks in. Re-run it whenever Selenne's UI changes.
 
+## Aggregator — sessions from raw spans
+
+Ingest only stores raw rows (spans, host events, alerts). The `aggregator`
+service turns them into one summary row per session in `agent_sessions`
+(spans, errors, tool and LLM calls, tokens, highest alert score per rule,
+hosts) and one row per agent process in `agent_processes`.
+
+It works in rounds ("ticks"), every `AGG_INTERVAL` (5 s). Each round reads the
+rows that arrived since the last one, up to `AGG_BATCH` per table, finds their
+sessions and recalculates those sessions from all their spans, all in one
+transaction. A full batch means a backlog, and the next round starts at once.
+
+- **Sessions.** Traces sharing a `gen_ai.conversation.id` (or `session.id`)
+  are one session; any other trace is its own session.
+- **Nothing skipped.** Each round also re-reads the last `AGG_OVERLAP` (60 s),
+  for rows whose transaction committed late. Ingest transactions are cut off
+  after `INGEST_TXN_TIMEOUT` (30 s), so none can commit later than that.
+- **Hourly check.** Every `AGG_VERIFY_INTERVAL` it recalculates all sessions
+  active in the last `AGG_VERIFY_WINDOW` (2 h) and logs how many were wrong.
+  That number should stay 0.
+- **Safe to restart or duplicate.** Rounds are idempotent and take an advisory
+  lock. To rebuild everything (first deploy, after a fix), set
+  `aggregator_state.last_id` to 0 and the rounds work through the raw tables.
+- **Indexes.** The indexes it needs on the big raw tables are built
+  `CONCURRENTLY` at startup, in the background, so ingest keeps writing.
+
+`python -m selenne_agents.aggregate check` exits 1 when the last round is older
+than `AGG_MAX_LAG` (120 s); it is the container healthcheck.
+
+**Customers:** `agent_processes` needs `process.pid` and `host.name` on the
+spans' resource. Turn on the OTel SDK's process and host resource detectors;
+in Python: `OTEL_EXPERIMENTAL_RESOURCE_DETECTORS=otel,process,host`.
+
 ## Logs — kept apart from Selenne's alerting
 
 OTel/Agents activity never reaches the files Selenne's Wazuh collector reads
@@ -83,7 +117,7 @@ OTel/Agents activity never reaches the files Selenne's Wazuh collector reads
 
 | Where | What |
 |---|---|
-| `ingest.json`, `console.json` in this stack's `logs` volume (`/var/log/selenne-agents/`) | one JSON line per ingested batch, errors, console activity |
+| `ingest.json`, `console.json`, `aggregate.json` in this stack's `logs` volume (`/var/log/selenne-agents/`) | one JSON line per ingested batch, errors, console activity |
 | Selenne `logs/selenne-agents.json` (`AGENTS_LOG`) | key created/revoked, internal verify calls, and the containers' HTTP calls into Selenne — instead of `flask_access.log` |
 
 Records are namespaced `selenne_agents.*`, never `selenne.*`, so even a
@@ -233,6 +267,13 @@ selenne_agents/
     http_app.py       Flask: /v1/traces, /v1/events, /v1/host-events
     grpc_server.py    OTLP/gRPC TraceService
     __main__.py       runs both listeners
+  aggregate/
+    worker.py         the loop: a round every AGG_INTERVAL, backoff, the hourly check
+    __main__.py       runs it; `check` is the healthcheck
+  store/
+    postgres.py       all database access
+    aggregates.py     the aggregator's SQL (one round, the check)
+    schema.sql        tables, applied by ingest at startup
   console/
     app.py            /agents/ page + /agents/api/* (sessions, one session)
     selenne_session.py  cookie -> Selenne /api/auth/me, cached

@@ -59,6 +59,14 @@ class Settings:
     ingest_txn_timeout: float = 30.0
     agg_overlap: float = 60.0
 
+    # Aggregator (python -m selenne_agents.aggregate): tick this often, or at
+    # once again while a page comes back full; rows per table per tick; and the
+    # periodic check (PostgresStore.verify_recent) — how often, how far back.
+    agg_interval: float = 5.0
+    agg_batch: int = 20000
+    agg_verify_interval: float = 3600.0
+    agg_verify_window: float = 7200.0
+
     max_body_bytes: int = 5 * MIB           # on the wire (compressed)
     max_decompressed_bytes: int = 20 * MIB  # after gzip — zip-bomb guard
 
@@ -97,6 +105,10 @@ class Settings:
             rate_burst=_int("INGEST_RATE_BURST", cls.rate_burst),
             ingest_txn_timeout=_float("INGEST_TXN_TIMEOUT", cls.ingest_txn_timeout),
             agg_overlap=_float("AGG_OVERLAP", cls.agg_overlap),
+            agg_interval=_float("AGG_INTERVAL", cls.agg_interval),
+            agg_batch=_int("AGG_BATCH", cls.agg_batch),
+            agg_verify_interval=_float("AGG_VERIFY_INTERVAL", cls.agg_verify_interval),
+            agg_verify_window=_float("AGG_VERIFY_WINDOW", cls.agg_verify_window),
             max_body_bytes=_int("INGEST_MAX_BODY_BYTES", cls.max_body_bytes),
             max_decompressed_bytes=_int("INGEST_MAX_DECOMPRESSED_BYTES", cls.max_decompressed_bytes),
             bind=os.environ.get("INGEST_BIND", cls.bind),

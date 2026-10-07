@@ -110,6 +110,7 @@ class TickStats:
     sessions: int       # sessions rebuilt
     processes: int      # process rows upserted
     more: bool          # a page was full: tick again straight away
+    new: int            # rows past the watermarks (the rest are catch-up re-reads)
     seconds: float
 
 
@@ -306,13 +307,13 @@ class PostgresStore:
                 return None
             cur.execute("SELECT name, last_id, scanned_at FROM aggregator_state")
             marks = {name: (last_id, scanned_at) for name, last_id, scanned_at in cur.fetchall()}
-            picked, more, moved = {}, False, {}
+            picked, more, moved, new = {}, False, {}, 0
             for table, pick_sql in agg.PICK_TICK_SQL.items():
                 last_id, scanned_at = marks.get(table, (0, None))
                 cur.execute(agg.PAGE_SQL.format(table=table),
                             {"last_id": last_id, "batch": batch})
                 upto, n = cur.fetchone()
-                more = more or n >= batch
+                more, new = more or n >= batch, new + n
                 cur.execute(pick_sql, {"last_id": last_id, "upto": upto,
                                        "scanned_at": scanned_at, "overlap": overlap_s})
                 picked[table], moved[table] = cur.rowcount, upto
@@ -320,7 +321,7 @@ class PostgresStore:
             for table, upto in moved.items():
                 cur.execute(agg.MARK_SQL, {"name": table, "last_id": upto})
         return TickStats(picked["spans"], picked["host_events"], picked["agent_alerts"],
-                         sessions, processes, more, time.monotonic() - t0)
+                         sessions, processes, more, new, time.monotonic() - t0)
 
     def verify_recent(self, window_s=7200.0):
         """The periodic check: rebuild every session with a span or alert
@@ -362,6 +363,12 @@ class PostgresStore:
         processes = cur.rowcount
         cur.execute(agg.EVENT_PROCESSES_SQL)
         return sessions, processes + cur.rowcount
+
+    def schema_ready(self):
+        """True once ingest has applied a schema with the aggregator tables."""
+        with self._conn() as conn, conn.cursor() as cur:
+            cur.execute("SELECT to_regclass('aggregator_state') IS NOT NULL")
+            return cur.fetchone()[0]
 
     def aggregator_lag(self):
         """Seconds since the last completed tick, None if none has run yet."""

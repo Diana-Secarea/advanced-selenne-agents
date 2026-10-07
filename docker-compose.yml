@@ -73,6 +73,29 @@ services:
       ingest:
         condition: service_started   # ingest applies the schema
 
+  # Builds agent_sessions / agent_processes from what ingest writes, one round
+  # every AGG_INTERVAL. No ports: it only talks to Postgres. A second copy is
+  # harmless (an advisory lock lets one run at a time).
+  aggregator:
+    build: .
+    restart: unless-stopped
+    command: ["python", "-m", "selenne_agents.aggregate"]
+    env_file: .env
+    environment:
+      SELENNE_AGENTS_DATABASE_URL: postgresql://selenne_agents:${SELENNE_AGENTS_DB_PASSWORD}@postgres:5432/selenne_agents
+    volumes:
+      - logs:/var/log/selenne-agents   # aggregate.json
+    healthcheck:
+      # unhealthy when the last round is older than AGG_MAX_LAG (120 s)
+      test: ["CMD", "python", "-m", "selenne_agents.aggregate", "check"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    depends_on:
+      ingest:
+        condition: service_started   # ingest applies the schema; the aggregator waits for it
+
 volumes:
   pgdata:
   # Selenne Agents' own logs. Deliberately NOT /var/log/wazuh-ai or anything

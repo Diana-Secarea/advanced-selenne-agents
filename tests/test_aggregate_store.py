@@ -114,11 +114,11 @@ def test_tick_is_idempotent(pg):
     _put(pg, _span(T1, 1, {"gen_ai.tool.name": "x"}), _span(T2, 1, {"session.id": "s"}))
     snap = "SELECT * FROM agent_sessions ORDER BY session_id"
     cols = "username, project, session_id, kind, spans, tool_calls, last_ns"
-    pg.aggregate_tick()
+    assert pg.aggregate_tick().new == 2
     first = _sql(pg, f"SELECT {cols} FROM ({snap}) a")
     # a second tick re-reads the same rows through the catch-up scan
     again = pg.aggregate_tick()
-    assert again.spans == 2
+    assert (again.spans, again.new) == (2, 0)
     assert _sql(pg, f"SELECT {cols} FROM ({snap}) a") == first
     # and an idle tick after the overlap has passed reads nothing
     _sql(pg, "UPDATE spans SET received_at = received_at - interval '1 hour'")
@@ -140,7 +140,7 @@ def test_late_commit_below_watermark_is_caught(pg):
     _sql(pg, "UPDATE spans SET received_at = %s - interval '1 hour' WHERE trace_id = %s",
          (scanned_at, T1))
     stats = pg.aggregate_tick()
-    assert stats.spans == 2 and _sessions(pg)[T2]["spans"] == 2
+    assert (stats.spans, stats.new) == (2, 0) and _sessions(pg)[T2]["spans"] == 2
     assert _sql(pg, "SELECT last_id FROM aggregator_state WHERE name = 'spans'") == [(last_id,)]
 
 
