@@ -18,8 +18,12 @@ Zero-config: any process started with `OTEL_SERVICE_NAME` (or `service.name`
 in `OTEL_RESOURCE_ATTRIBUTES`) — the variable an OTel-instrumented agent
 already has — named after it, and every process it starts. Tetragon passes
 only those two variables (`--filter-environment-variables`), never the rest of
-the environment. Infrastructure that sets the variable for its own tracing
-(dockerd does) is ignored. Agents without OTel: `agents.match` in sensor.yaml.
+the environment. Infrastructure that sets the variable for its own tracing is
+ignored — dockerd, containerd and every `containerd-shim-<id>`, CRI-O, Podman,
+kubelet, k3s/rke2 by default (`agents.ignore_services`, a trailing `*` matches
+a prefix). Agent status is inherited by an agent's children but never across a
+container boundary, so a mis-tagged runtime on the host cannot pull every
+container's processes in. Agents without OTel: `agents.match` in sensor.yaml.
 
 ## What each event carries
 

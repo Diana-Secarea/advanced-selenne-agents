@@ -18,7 +18,9 @@ state_dir: /var/lib/selenne-sensor       # saved position + spool of unsent batc
 # it. Children of an agent always count as that agent.
 agents:
   zero_config: true
-  ignore_services: [dockerd, containerd, buildkitd, docker-proxy, selenne-sensor]
+  # infrastructure that sets OTEL_SERVICE_NAME for its own tracing; a trailing * matches a prefix
+  ignore_services: [dockerd, docker-proxy, buildkitd, "containerd*", crio, "conmon*", "podman*", cri-dockerd,
+    kubelet, kube-proxy, "k3s*", "rke2*", tetragon, selenne-sensor]
   match: []                              # agents that do not use OTel, e.g.
   #  - service: legacy-bot
   #    binary: '/python3?$'              # regexp on the executable

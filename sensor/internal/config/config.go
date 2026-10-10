@@ -106,8 +106,16 @@ func Default() Config {
 		Tetragon: Tetragon{ExportFile: "/var/run/tetragon/events.log"},
 		StateDir: "/var/lib/selenne-sensor",
 		Agents: Agents{
-			ZeroConfig:     true,
-			IgnoreServices: []string{"dockerd", "containerd", "buildkitd", "docker-proxy", "selenne-sensor"},
+			ZeroConfig: true,
+			// infrastructure that sets OTEL_SERVICE_NAME for its own tracing;
+			// a trailing * matches a prefix (containerd names each shim
+			// containerd-shim-<container id>)
+			IgnoreServices: []string{
+				"dockerd", "docker-proxy", "buildkitd", "containerd*", // Docker, containerd + its shims
+				"crio", "conmon*", "podman*", "cri-dockerd", // CRI-O, Podman
+				"kubelet", "kube-proxy", "k3s*", "rke2*", // Kubernetes node components
+				"tetragon", "selenne-sensor", // the sensor itself
+			},
 		},
 		Network: Network{Local: true, Private: true, Public: true},
 		Files: Files{

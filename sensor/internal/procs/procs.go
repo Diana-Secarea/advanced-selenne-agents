@@ -40,17 +40,22 @@ var wrappers = map[string]bool{"timeout": true, "env": true, "nohup": true, "nic
 func (p *Proc) Agent() bool { return p != nil && p.Service != "" }
 
 type Table struct {
-	cfg    config.Agents
-	ignore map[string]bool
-	byExec map[string]*Proc
-	byPID  map[uint32][]*Proc // oldest start first
+	cfg      config.Agents
+	ignore   map[string]bool
+	ignorePf []string // "name*" entries
+	byExec   map[string]*Proc
+	byPID    map[uint32][]*Proc // oldest start first
 }
 
 func New(cfg config.Agents) *Table {
 	t := &Table{cfg: cfg, ignore: map[string]bool{},
 		byExec: map[string]*Proc{}, byPID: map[uint32][]*Proc{}}
 	for _, s := range cfg.IgnoreServices {
-		t.ignore[s] = true
+		if strings.HasSuffix(s, "*") {
+			t.ignorePf = append(t.ignorePf, strings.TrimSuffix(s, "*"))
+		} else {
+			t.ignore[s] = true
+		}
 	}
 	return t
 }
@@ -96,9 +101,24 @@ func (t *Table) Exec(p *tetragon.Process, parent *tetragon.Process) *Proc {
 	return pr
 }
 
+func (t *Table) ignored(service string) bool {
+	if t.ignore[service] {
+		return true
+	}
+	for _, pf := range t.ignorePf {
+		if strings.HasPrefix(service, pf) {
+			return true
+		}
+	}
+	return false
+}
+
 func (t *Table) decide(p *tetragon.Process, pr *Proc) string {
 	if t.cfg.ZeroConfig {
-		if s := ServiceFromEnv(p); s != "" && !t.ignore[s] {
+		if s := ServiceFromEnv(p); s != "" {
+			if t.ignored(s) {
+				return "" // infrastructure says so itself: never an agent, not even by parent
+			}
 			return s
 		}
 	}
@@ -107,8 +127,10 @@ func (t *Table) decide(p *tetragon.Process, pr *Proc) string {
 			return t.cfg.Match[i].Service
 		}
 	}
-	// a child of an agent is part of it, even if its environment was cleared
-	if parent := t.parentOf(p, pr); parent.Agent() {
+	// a child of an agent is part of it, even if its environment was cleared —
+	// but not across a container boundary: what a container runtime starts
+	// inside a new container is that container's, not its launcher's
+	if parent := t.parentOf(p, pr); parent.Agent() && parent.Container == pr.Container {
 		return parent.Service
 	}
 	return ""

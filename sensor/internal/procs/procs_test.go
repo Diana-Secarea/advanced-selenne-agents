@@ -136,3 +136,49 @@ func TestRootIsTheAgentsMainProcess(t *testing.T) {
 		t.Fatal("a non-agent is never an agent root")
 	}
 }
+
+// Seen on selenne-prod: containerd sets OTEL_SERVICE_NAME=containerd-shim-<id>
+// on each shim, and everything it started inside containers followed it.
+func TestContainerdShimsAndContainerBoundaries(t *testing.T) {
+	tb := table()
+	shim := tb.Exec(proc(1000, 1, 0, "OTEL_SERVICE_NAME", "containerd-shim-7aeabea352a0dedf"), nil)
+	runc := tb.Exec(proc(1001, 1000, time.Second), nil) // env cleared, parent is the shim
+	if shim.Agent() || runc.Agent() {
+		t.Fatalf("shim %q runc %q", shim.Service, runc.Service)
+	}
+	// an agent on the host that launches a container: the container's
+	// processes are not the agent's
+	agent := tb.Exec(proc(1100, 1, 0, "OTEL_SERVICE_NAME", "bot"), nil)
+	inBox := proc(1101, 1100, time.Second)
+	inBox.Docker = "facb8fcb8a12df7ee5c53aade12edb8"
+	if !agent.Agent() || tb.Exec(inBox, nil).Agent() {
+		t.Fatal("agent status crossed into a container")
+	}
+	// an agent inside a container: its children in the same container count
+	boxed := proc(1200, 1, 0, "OTEL_SERVICE_NAME", "boxed-bot")
+	boxed.Docker = "1c210c6eff010da34bd4a21e3db8ee0"
+	tb.Exec(boxed, nil)
+	child := proc(1201, 1200, time.Second)
+	child.Docker = boxed.Docker
+	if s := tb.Exec(child, nil).Service; s != "boxed-bot" {
+		t.Fatalf("same-container child: %q", s)
+	}
+	// an ignored service never inherits from an agent parent either
+	ign := tb.Exec(proc(1102, 1100, 2*time.Second, "OTEL_SERVICE_NAME", "dockerd"), nil)
+	if ign.Agent() {
+		t.Fatal("an ignored service inherited agent status")
+	}
+}
+
+func TestDefaultIgnoreListCoversCommonRuntimes(t *testing.T) {
+	tb := table()
+	for i, name := range []string{"containerd", "containerd-shim-abc", "containerd-shim-runc-v2", "conmon-1234",
+		"podman-system", "crio", "kubelet", "k3s-server", "rke2-agent", "tetragon"} {
+		if tb.Exec(proc(uint32(2000+i), 1, 0, "OTEL_SERVICE_NAME", name), nil).Agent() {
+			t.Errorf("%s counted as an agent", name)
+		}
+	}
+	if !tb.Exec(proc(2100, 1, 0, "OTEL_SERVICE_NAME", "containers-bot"), nil).Agent() {
+		t.Error("a real agent whose name merely starts like a runtime was ignored")
+	}
+}
